@@ -1,7 +1,17 @@
+use std::cell::{Ref, RefCell};
+use std::cmp::Ordering;
+use std::convert::Infallible;
+use std::rc::Rc;
+use std::vec::IntoIter;
+
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
+
+use crate::connection::ConnectionImpl;
 use crate::connection::Result;
 use crate::error::Error;
+
+pub type Row = Vec<Value>;
 
 #[derive(Debug, Deserialize)]
 pub struct Column {
@@ -11,13 +21,22 @@ pub struct Column {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ResultSet {
+struct FetchedData {
+    #[serde(rename = "numRows")]
+    chunk_rows_num: usize,
+    #[serde(default)]
+    data: Vec<Vec<Value>>
+}
+
+
+#[derive(Debug, Deserialize)]
+pub struct ResultSetImpl {
     #[serde(rename = "numColumns")]
     num_columns: u8,
     #[serde(rename = "numRows")]
-    total_num_rows: u32,
+    total_rows_num: u32,
     #[serde(rename = "numRowsInMessage")]
-    chunk_num_rows: u16,
+    chunk_rows_num: usize,
     #[serde(rename = "resultSetHandle")]
     statement_handle: Option<u16>,
     columns: Vec<Column>,
@@ -25,61 +44,118 @@ pub struct ResultSet {
     data: Vec<Vec<Value>>,
 }
 
+#[derive(Debug)]
+pub struct ResultSet {
+    num_columns: u8,
+    total_rows_num: u32,
+    total_rows_pos: u32,
+    chunk_rows_num: usize,
+    chunk_rows_pos: usize,
+    statement_handle: Option<u16>,
+    columns: Vec<Column>,
+    iter: Vec<IntoIter<Value>>,
+    connection: Rc<RefCell<ConnectionImpl>>,
+}
+
+impl ResultSet {
+    fn fetch(&mut self) -> Option<Vec<Value>>{
+        self.statement_handle.and_then(|h| {
+            let payload = json!({
+            "command": "fetch",
+            "resultSetHandle": self.statement_handle,
+            "startPosition": self.total_rows_pos,
+            "numBytes": 5 * 1024 * 1024,
+        });
+
+        let mut c = (*self.connection).borrow_mut();
+        let f = c.get_data::<FetchedData>(payload).unwrap();
+
+        self.chunk_rows_num = f.chunk_rows_num;
+        self.iter = f.data.into_iter().map(|v| v.into_iter()).collect();
+        let r: Row = self.iter.iter_mut().map(|iter| iter.next().unwrap()).collect();
+        if r.is_empty() {
+            None
+        } else {
+            Some(r)
+        }
+        })
+    }
+}
+
+impl Iterator for ResultSet {
+    type Item = Row;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let r: Row = self.iter.iter_mut().map(|iter| iter.next().unwrap()).collect();
+        if r.is_empty() {
+            None
+        } else {
+            Some(r)
+        }.or_else(|| {
+            if self.total_rows_pos >= self.total_rows_num { None }
+            else if self.chunk_rows_pos >= self.chunk_rows_num { self.fetch() }
+            else { None }
+        })
+    }
+}
+
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct Results {
     #[serde(rename = "numResults")]
     num_results: u16,
     #[serde(rename = "results")]
-    #[serde(default)]
-    query_results: Vec<QueryResult>,
+    query_results: Vec<QueryResultImpl>,
 }
 
 impl Results {
-    pub(crate) fn get_one(mut self) -> Result<QueryResult> {
-        if let 1u16 = &self.num_results {
-            Ok(self.query_results.remove(0))
-        } else {
-            Err(Error::InvalidResponse(format!("{} result sets returned. Expecting 1", &self.num_results)))
-        }
-    }
-
-    pub(crate) fn get_all(mut self) -> Result<Vec<QueryResult>> {
-        Ok(self.query_results)
+    pub(crate) fn consume(mut self, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Vec<QueryResult> {
+        self.query_results
+            .into_iter()
+            .map(|q| {
+                match q {
+                    QueryResultImpl::ResultSet { resultSet } =>
+                        {
+                            let r = ResultSet {
+                                num_columns: resultSet.num_columns,
+                                total_rows_num: resultSet.total_rows_num,
+                                total_rows_pos: 0,
+                                chunk_rows_num: resultSet.chunk_rows_num,
+                                chunk_rows_pos: 0,
+                                statement_handle: resultSet.statement_handle,
+                                columns: resultSet.columns,
+                                iter: resultSet.data.into_iter().map(|v| v.into_iter()).collect(),
+                                connection: Rc::clone(con_rc),
+                            };
+                            QueryResult::ResultSet(r)
+                        }
+                    QueryResultImpl::RowCount { rowCount } => QueryResult::RowCount(rowCount)
+                }
+            })
+            .collect()
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(from = "QueryResultImpl")]
+#[derive(Debug)]
 pub enum QueryResult {
-    #[serde(rename = "resultSet")]
     ResultSet(ResultSet),
-    #[serde(rename = "rowCount")]
     RowCount(u32),
-}
-
-impl From<QueryResultImpl> for QueryResult {
-    fn from(q: QueryResultImpl) -> Self {
-        match q {
-            QueryResultImpl::ResultSet {resultSet} => Self::ResultSet(resultSet),
-            QueryResultImpl::RowCount {rowCount} => Self::RowCount(rowCount)
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "resultType")]
 pub(crate) enum QueryResultImpl {
     #[serde(rename = "resultSet")]
-    ResultSet{resultSet: ResultSet},
+    ResultSet { resultSet: ResultSetImpl },
     #[serde(rename = "rowCount")]
-    RowCount {rowCount: u32}
+    RowCount { rowCount: u32 },
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::{json, Value};
 
-    use crate::query_result::{Column, QueryResult, Results, ResultSet};
+    use crate::query_result::{Column, QueryResult, Results, ResultSetImpl};
 
     #[test]
     fn deser_column() {
@@ -122,7 +198,7 @@ mod tests {
                ]
             ]);
 
-        let de : Vec<Vec<Value>> = serde_json::from_value(json_data).unwrap();
+        let de: Vec<Vec<Value>> = serde_json::from_value(json_data).unwrap();
     }
 
     #[test]
@@ -149,7 +225,7 @@ mod tests {
             "numRowsInMessage":1
          });
 
-        let de: ResultSet = serde_json::from_value(json_data).unwrap();
+        let de: ResultSetImpl = serde_json::from_value(json_data).unwrap();
     }
 
     #[test]
@@ -177,19 +253,19 @@ mod tests {
          },
          "resultType":"resultSet"
       });
-
-        let de: QueryResult = serde_json::from_value(json_data).unwrap();
+        use crate::query_result::QueryResultImpl;
+        let de: QueryResultImpl = serde_json::from_value(json_data).unwrap();
     }
 
-        #[test]
+    #[test]
     fn deser_query_result2() {
         let json_data = json!(
             {
                 "resultType": "rowCount",
                 "rowCount": 0
             });
-
-        let de: QueryResult = serde_json::from_value(json_data).unwrap();
+        use crate::query_result::QueryResultImpl;
+        let de: QueryResultImpl = serde_json::from_value(json_data).unwrap();
     }
 
     #[test]

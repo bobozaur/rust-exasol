@@ -1,25 +1,54 @@
+use std::borrow::BorrowMut;
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::net::TcpStream;
+use std::rc::Rc;
 
 /// Main protagonist of this crate, the `ExaConnection` struct
 /// will be what we use to interact with the database
 
 use rand::rngs::OsRng;
 use rsa::{PaddingScheme, pkcs1::FromRsaPublicKey, PublicKey, RsaPublicKey};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tungstenite::{connect, Message, stream::MaybeTlsStream, WebSocket};
 use url::Url;
 
 use crate::error::{Error, ExaError};
-use crate::query_result::{QueryResult, Results, ResultSet};
+use crate::query_result::{QueryResult, Results, ResultSetImpl};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub struct ExaConnection {
+#[derive(Debug)]
+pub struct Connection {
+    con: Rc<RefCell<ConnectionImpl>>
+}
+
+impl Connection {
+    pub fn new(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
+        let con_impl = ConnectionImpl::new(&dsn, &schema, &user, &password)?;
+        Ok(Connection{ con: Rc::new(RefCell::new(con_impl)) })
+    }
+
+    pub fn execute(&mut self, query: &str) -> Result<QueryResult> {
+        (*self.con).borrow_mut().execute(&self.con, query)
+    }
+
+    pub fn execute_batch(&mut self, queries: Vec<&str>) -> Result<Vec<QueryResult>> {
+        (*self.con).borrow_mut().execute_batch(&self.con, queries)
+    }
+
+    pub fn set_attributes(&mut self, attrs: Value) -> Result<()> {
+        (*self.con).borrow_mut().set_attributes(attrs)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ConnectionImpl {
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
 }
 
-impl Drop for ExaConnection {
+impl Drop for ConnectionImpl {
     fn drop(&mut self) {
         // Closing session on Exasol side
         self.do_request(json!({"command": "disconnect"}));
@@ -34,30 +63,16 @@ impl Drop for ExaConnection {
     }
 }
 
-impl ExaConnection {
-    pub fn new(dsn: &str, schema: &str, user: &str, password: &str) -> Result<ExaConnection> {
+impl ConnectionImpl {
+    pub(crate) fn new(dsn: &str, schema: &str, user: &str, password: &str) -> Result<ConnectionImpl> {
         let (ws, _) = connect(Url::parse(dsn)?)?;
-        let mut con = ExaConnection { ws };
+        let mut con = ConnectionImpl { ws };
         con.login(schema, user, password)?;
         con.get_attributes()?;
         Ok(con)
     }
 
-    pub fn execute(&mut self, query: &str) -> Result<QueryResult> {
-        let payload = json!({"command": "execute", "sqlText": query});
-        serde_json::from_value::<Results>(self.do_request(payload)?
-            .ok_or(Error::InvalidResponse("No response data received".to_owned()))?)?
-            .get_one()
-    }
-
-    pub fn execute_batch(&mut self, queries: Vec<&str>) -> Result<Vec<QueryResult>> {
-        let payload = json!({"command": "executeBatch", "sqlTexts": queries});
-        serde_json::from_value::<Results>(self.do_request(payload)?
-            .ok_or(Error::InvalidResponse("No response data received".to_owned()))?)?
-            .get_all()
-    }
-
-    pub fn set_attributes(&mut self, attrs: Value) -> Result<()> {
+    pub(crate) fn set_attributes(&mut self, attrs: Value) -> Result<()> {
         let mut payload = json!({"command": "setAttributes"});
 
         match &mut payload {
@@ -71,6 +86,26 @@ impl ExaConnection {
         self.get_attributes()?;
 
         Ok(())
+    }
+
+    pub(crate) fn execute(&mut self, con_impl: &Rc<RefCell<ConnectionImpl>>, query: &str) -> Result<QueryResult> {
+        let payload = json!({"command": "execute", "sqlText": query});
+        self._execute(con_impl, payload).and_then(|mut v: Vec<QueryResult>| Ok(v.swap_remove(0)))
+    }
+
+    pub(crate) fn execute_batch(&mut self, con_impl: &Rc<RefCell<ConnectionImpl>>, queries: Vec<&str>) -> Result<Vec<QueryResult>> {
+        let payload = json!({"command": "executeBatch", "sqlTexts": queries});
+        self._execute(con_impl, payload)
+    }
+
+    fn _execute(&mut self, con_impl: &Rc<RefCell<ConnectionImpl>>, payload: Value) -> Result<Vec<QueryResult>> {
+        Ok(self.get_data::<Results>(payload)?.consume(con_impl))
+    }
+
+    pub(crate) fn get_data<T>(&mut self, payload: Value) -> Result<T>
+    where T: for<'de> Deserialize<'de> {
+        Ok(serde_json::from_value::<T>(self.do_request(payload)?
+            .ok_or(Error::InvalidResponse("No response data received".to_owned()))?)?)
     }
 
     fn get_attributes(&mut self) -> Result<()> {
@@ -97,24 +132,24 @@ impl ExaConnection {
 
     /// Consumes the response JSON while checking the status
     /// Returns an Option with the responseData field, attributes field or None
-    fn consume(mut json_data: Value) -> Result<Option<Value>> {
-        let status = ExaConnection::extract_value(&mut json_data, "status")?
+    fn validate(mut json_data: Value) -> Result<Option<Value>> {
+        let status = ConnectionImpl::extract_value(&mut json_data, "status")?
             .as_str()
             .ok_or(Error::InvalidResponse("Could not parse status field".to_owned()))?
             .to_owned();
 
         match status.as_str() {
             "ok" => {
-                if let Ok(data) = ExaConnection::extract_value(&mut json_data, "responseData") {
+                if let Ok(data) = ConnectionImpl::extract_value(&mut json_data, "responseData") {
                     Ok(Some(data))
-                } else if let Ok(attr) = ExaConnection::extract_value(&mut json_data, "attributes") {
+                } else if let Ok(attr) = ConnectionImpl::extract_value(&mut json_data, "attributes") {
                     Ok(Some(attr))
                 } else {
                     Ok(None)
                 }
             }
             "error" => {
-                let exception: Value = ExaConnection::extract_value(&mut json_data, "exception")?;
+                let exception: Value = ConnectionImpl::extract_value(&mut json_data, "exception")?;
                 let exc: ExaError = serde_json::from_value(exception)?;
                 Err(Error::RequestError(exc))
             }
@@ -128,15 +163,15 @@ impl ExaConnection {
             .take())
     }
 
-    fn do_request(&mut self, payload: Value) -> Result<Option<Value>> {
-        self.send(payload).and_then(|_| self.recv()).and_then(|data| ExaConnection::consume(data))
+    pub(crate) fn do_request(&mut self, payload: Value) -> Result<Option<Value>> {
+        self.send(payload).and_then(|_| self.recv()).and_then(|data| ConnectionImpl::validate(data))
     }
 
     fn get_public_key(&mut self) -> Result<RsaPublicKey> {
         let payload = json!({"command": "login", "protocolVersion": 1});
         let pem = self.do_request(payload)?
             .ok_or(Error::InvalidResponse("No data received".to_owned()))
-            .and_then(|mut data| ExaConnection::extract_value(&mut data, "publicKeyPem"))?
+            .and_then(|mut data| ConnectionImpl::extract_value(&mut data, "publicKeyPem"))?
             .as_str()
             .ok_or(Error::InvalidResponse("Malformed public key".to_owned()))?
             .to_owned();
@@ -153,7 +188,7 @@ impl ExaConnection {
 
     fn login(&mut self, schema: &str, user: &str, password: &str) -> Result<Option<Value>> {
         let public_key = self.get_public_key()?;
-        let enc_password = ExaConnection::encrypt_password(password, public_key)?;
+        let enc_password = ConnectionImpl::encrypt_password(password, public_key)?;
 
         let payload = json!({
                 "username": user,

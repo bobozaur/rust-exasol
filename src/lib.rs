@@ -5,9 +5,11 @@
 mod error;
 mod connection;
 mod query_result;
+mod macros;
 
 pub mod exasol {
-    pub use crate::connection::ExaConnection;
+    pub use crate::connection::Connection;
+    pub use crate::query_result::{QueryResult, ResultSet, Row};
 }
 
 
