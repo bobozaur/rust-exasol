@@ -25,7 +25,7 @@ struct FetchedData {
     #[serde(rename = "numRows")]
     chunk_rows_num: usize,
     #[serde(default)]
-    data: Vec<Vec<Value>>
+    data: Vec<Vec<Value>>,
 }
 
 
@@ -58,7 +58,7 @@ pub struct ResultSet {
 }
 
 impl ResultSet {
-    fn fetch(&mut self) -> Option<Vec<Value>>{
+    fn fetch(&mut self) -> Option<Vec<Value>> {
         self.statement_handle.and_then(|h| {
             let payload = json!({
             "command": "fetch",
@@ -67,17 +67,17 @@ impl ResultSet {
             "numBytes": 5 * 1024 * 1024,
         });
 
-        let mut c = (*self.connection).borrow_mut();
-        let f = c.get_data::<FetchedData>(payload).unwrap();
+            let mut c = (*self.connection).borrow_mut();
+            let f = c.get_data::<FetchedData>(payload).unwrap();
 
-        self.chunk_rows_num = f.chunk_rows_num;
-        self.iter = f.data.into_iter().map(|v| v.into_iter()).collect();
-        let r: Row = self.iter.iter_mut().map(|iter| iter.next().unwrap()).collect();
-        if r.is_empty() {
-            None
-        } else {
-            Some(r)
-        }
+            self.chunk_rows_num = f.chunk_rows_num;
+            self.chunk_rows_pos = 0;
+
+            self.iter = f.data.into_iter().map(|v| v.into_iter()).collect();
+            self.iter.iter_mut()
+                .map(|iter| iter.next())
+                .collect::<Option<Row>>()
+                .and_then(|r| if r.is_empty() { None } else { Some(r) })
         })
     }
 }
@@ -86,16 +86,18 @@ impl Iterator for ResultSet {
     type Item = Row;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let r: Row = self.iter.iter_mut().map(|iter| iter.next().unwrap()).collect();
-        if r.is_empty() {
-            None
-        } else {
-            Some(r)
-        }.or_else(|| {
-            if self.total_rows_pos >= self.total_rows_num { None }
-            else if self.chunk_rows_pos >= self.chunk_rows_num { self.fetch() }
-            else { None }
-        })
+        let res = self.iter.iter_mut()
+            .map(|iter| iter.next())
+            .collect::<Option<Row>>()
+            .and_then(|r| if r.is_empty() { None } else { Some(r) })
+            .or_else(|| {
+                if self.total_rows_pos == self.total_rows_num { None } else if self.chunk_rows_pos == self.chunk_rows_num { self.fetch() } else { None }
+            });
+
+        self.total_rows_pos += 1;
+        self.chunk_rows_pos += 1;
+
+        res
     }
 }
 
