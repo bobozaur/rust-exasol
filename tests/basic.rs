@@ -24,10 +24,12 @@ mod tests {
         // println!("{:?}", result);
         let result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
         // println!("{:?}", result);
-        let result = exa_con.execute("SELECT * FROM DIM_SIMPLE_DATE LIMIT 2000;").unwrap();
+        let result = exa_con.execute("SELECT * FROM DIM_SIMPLE_DATE LIMIT 100000;").unwrap();
         // println!("{:?}", result);
         if let QueryResult::ResultSet(mut r) = result {
-            println!("{:?}", r.next());
+            for row in r {
+                // println!("{:?}", row);
+            }
         }
         let result = exa_con.execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2").unwrap();
         // println!("{:?}", result);
