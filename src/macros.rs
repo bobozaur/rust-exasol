@@ -1,7 +1,27 @@
 use serde_json::{json, Map, Value};
 
-/// Macro for creating and validating query binding parameters
-#[macro_export]
+/// Macro for creating query binding parameters
+/// ```
+/// #[macro_use] extern crate exasol;
+///
+/// #[should_panic]
+/// fn test1() {
+///     let value = params!("a");
+/// }
+/// ```
+///
+/// ```
+/// #[macro_use] extern crate exasol;
+///
+/// fn test2() {
+///     let value = params!({
+///     "code": 200,
+///     "success": true,
+///     "features": ["serde", "shawerma"]
+///     });
+/// }
+/// ```
+#[macro_export(local_inner_macros)]
 macro_rules! params {
     ($($json:tt)+) => {
         validate_params(json!($($json)+))
@@ -30,34 +50,4 @@ fn validate_params(p: Value) -> Map<String, Value> {
     } else {
         panic!("Invalid parameter {}", p)
     }
-}
-
-#[test]
-#[should_panic]
-fn test1() {
-    let value = params!({
-    "code": 200,
-    "success": true,
-    "payload": {
-        "features": [
-            "serde",
-            "json"
-        ]
-    }
-});
-}
-
-#[test]
-#[should_panic]
-fn test2() {
-    let value = params!("a");
-}
-
-#[test]
-fn test3() {
-    let value = params!({
-    "code": 200,
-    "success": true,
-    "features": ["serde", "shawerma"]
-    });
 }
