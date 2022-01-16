@@ -1,6 +1,7 @@
 //! # Rust-Exasol
 //!
-//! `Rust EXASOL` is a database connector for Exasol implemented using the Websocket protocol
+//! Database connector for Exasol implemented using the Websocket protocol.
+//! Messages are sent and received in the JSON format.
 
 mod error;
 mod connection;
@@ -9,7 +10,7 @@ mod macros;
 
 pub mod exasol {
     pub use crate::connection::Connection;
-    pub use crate::query_result::{QueryResult, ResultSet, Row};
+    pub use crate::query_result::{QueryResult, ResultSet, Row, Column};
 }
 
 
