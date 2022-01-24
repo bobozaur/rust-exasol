@@ -8,7 +8,7 @@ mod tests {
 
     use serde_json::json;
 
-    use exasol::exasol::{Connection, QueryResult, ResultSet, Row};
+    use exasol::exasol::{Connection, QueryResult, ResultSet, Row, Result};
 
     #[test]
     fn it_works() {
@@ -24,11 +24,14 @@ mod tests {
         // println!("{:?}", result);
         let result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
         // println!("{:?}", result);
-        let result = exa_con.execute("SELECT * FROM DIM_SIMPLE_DATE LIMIT 100000;").unwrap();
+        let result = exa_con.execute("SELECT * FROM DIM_SIMPLE_DATE LIMIT 100;").unwrap();
         // println!("{:?}", result);
         if let QueryResult::ResultSet(mut r) = result {
-            for row in r {
-                // println!("{:?}", row);
+            let x = r.take(5000).collect::<Result<Vec<Row>>>();
+            if let Ok(v) = x {
+                for row in v.iter() {
+                    println!("{:?}", row);
+                }
             }
         }
         let result = exa_con.execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2").unwrap();
