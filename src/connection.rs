@@ -11,11 +11,8 @@ use serde_json::{json, Value};
 use tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
-use crate::error::{Error, ExaError};
+use crate::error::{Error, ExaError, Result};
 use crate::query_result::{QueryResult, Results};
-
-/// Result implementation to return an exasol::error::Error;
-pub type Result<T> = std::result::Result<T, Error>;
 
 /// The `Connection` struct will be what we use to interact with the database
 ///
@@ -155,6 +152,13 @@ impl ConnectionImpl {
     ) -> Result<Vec<QueryResult>> {
         let payload = json!({"command": "executeBatch", "sqlTexts": queries});
         self._execute(con_impl, payload)
+    }
+
+    /// Closes a result set
+    pub(crate) fn close_result_set(&mut self, handle: u16) -> Result<()> {
+        let payload = json!({"command": "closeResultSet", "resultSetHandles": [handle]});
+        self.do_request(payload)?;
+        Ok(())
     }
 
     /// Sends a request, deserializes it to the given generic and returns the result

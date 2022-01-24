@@ -7,6 +7,9 @@ use tungstenite;
 use rsa;
 use url;
 
+/// Result implementation to return an exasol::error::Error;
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Debug)]
 pub enum Error {
     InvalidResponse(String),
@@ -77,6 +80,7 @@ impl std::error::Error for Error {}
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ExaError {
     text: String,
+    #[serde(rename = "sqlCode")]
     code: String
 }
 
