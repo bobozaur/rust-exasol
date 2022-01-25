@@ -11,7 +11,7 @@ mod params;
 pub mod exasol {
     pub use crate::connection::Connection;
     pub use crate::query_result::{QueryResult, ResultSet, Row, Column};
-    pub use crate::params::{ParameterMap, SQLParameter};
+    pub use crate::params::{ParameterMap, SQLParameter, bind};
     pub use crate::error::{Result, Error};
 }
 
