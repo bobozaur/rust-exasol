@@ -229,10 +229,10 @@ impl Iterator for ResultSet {
     fn next(&mut self) -> Option<Self::Item> {
         let row = self.next_row().or_else(|| {
             // All rows retrieved
-            if self.total_rows_pos == self.total_rows_num {
+            if self.total_rows_pos >= self.total_rows_num {
                 None
                 // Whole chunk retrieved. Get new one.
-            } else if self.chunk_rows_pos == self.chunk_rows_num {
+            } else if self.chunk_rows_pos >= self.chunk_rows_num {
                 self.fetch_chunk()
                     .map_or_else(|e| Some(Err(e)), |_| self.next_row())
                 // If all else fails

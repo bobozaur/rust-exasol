@@ -54,6 +54,24 @@ impl Connection {
         (*self.con).borrow_mut().execute_batch(&self.con, queries)
     }
 
+    /// Ping the server and wait for Pong frame
+    ///
+    /// ```
+    /// # use exasol::exasol::{Connection};
+    /// # use std::env;
+    /// #
+    /// # let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+    /// exa_con.ping().unwrap();
+    /// ```
+    pub fn ping(&mut self) -> Result<()> {
+        (*self.con).borrow_mut().ping()
+    }
+
     /// Sets autocommit mode On or Off
     ///
     /// ```
@@ -208,6 +226,15 @@ impl ConnectionImpl {
         let payload = json!({"command": "closeResultSet", "resultSetHandles": [handle]});
         self.do_request(payload)?;
         Ok(())
+    }
+
+    /// Ping the server and waits for a Pong frame
+    pub(crate) fn ping(&mut self) -> Result<()>{
+        self.ws.write_message(Message::Ping(vec![]))?;
+        match self.ws.read_message()? {
+            Message::Pong(_) => Ok(()),
+            _ => Err(Error::InvalidResponse("Received frame different from Pong".to_string()))
+        }
     }
 
     /// Sends a request, deserializes it to the given generic and returns the result
