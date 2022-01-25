@@ -1,21 +1,20 @@
 //! Tests main crate functionalities, e.g: connecting, executing basic queries, etc.
 #[cfg(test)]
+#[allow(unused)]
 mod tests {
-    use std::cell::RefCell;
     use std::env;
-    use std::option::IntoIter;
-    use std::rc::Rc;
 
     use serde_json::json;
 
-    use exasol::exasol::{Connection, QueryResult, ResultSet, Row, Result};
+    use exasol::exasol::{Connection, QueryResult, Row, Result};
 
     #[test]
+    #[allow(unused)]
     fn it_works() {
-        let dsn = format!("ws://{}", std::env::var("EXA_DSN").unwrap());
-        let schema = std::env::var("EXA_SCHEMA").unwrap();
-        let user = std::env::var("EXA_USER").unwrap();
-        let password = std::env::var("EXA_PASSWORD").unwrap();
+        let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+        let schema = env::var("EXA_SCHEMA").unwrap();
+        let user = env::var("EXA_USER").unwrap();
+        let password = env::var("EXA_PASSWORD").unwrap();
 
         let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
         println!("Connected!");
@@ -26,11 +25,11 @@ mod tests {
         // println!("{:?}", result);
         let result = exa_con.execute("SELECT * FROM DIM_SIMPLE_DATE LIMIT 100;").unwrap();
         // println!("{:?}", result);
-        if let QueryResult::ResultSet(mut r) = result {
+        if let QueryResult::ResultSet(r) = result {
             let x = r.take(5000).collect::<Result<Vec<Row>>>();
             if let Ok(v) = x {
                 for row in v.iter() {
-                    println!("{:?}", row);
+                    // println!("{:?}", row);
                 }
             }
         }
@@ -41,7 +40,5 @@ mod tests {
 
         let results = exa_con.execute_batch(vec!("SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2"));
         // println!("{:?}", results);
-
-        exa_con.set_attributes(json!({"autocommit": false})).unwrap();
     }
 }

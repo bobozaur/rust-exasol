@@ -1,5 +1,4 @@
-use std::borrow::BorrowMut;
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::rc::Rc;
@@ -55,13 +54,66 @@ impl Connection {
         (*self.con).borrow_mut().execute_batch(&self.con, queries)
     }
 
+    /// Sets autocommit mode On or Off
+    ///
+    /// ```
+    /// # use exasol::exasol::{Connection};
+    /// # use std::env;
+    /// #
+    /// # let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+    /// exa_con.set_autocommit(false).unwrap();
+    /// ```
+    pub fn set_autocommit(&mut self, val: bool) -> Result<()> {
+        let payload = json!({"autocommit": val});
+        self.set_attributes(payload)
+    }
+
+    /// Sets the query timeout
+    ///
+    /// ```
+    /// # use exasol::exasol::{Connection};
+    /// # use std::env;
+    /// #
+    /// # let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+    /// exa_con.set_query_timeout(60).unwrap();
+    /// ```
+    pub fn set_query_timeout(&mut self, val: usize) -> Result<()> {
+        let payload = json!({"queryTimeout": val});
+        self.set_attributes(payload)
+    }
+
+    /// Sets the currently open schema
+    ///
+    /// ```
+    /// # use exasol::exasol::{Connection};
+    /// # use std::env;
+    /// #
+    /// # let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+    /// exa_con.set_schema(&schema).unwrap();
+    /// ```
+    pub fn set_schema(&mut self, schema: &str) -> Result<()> {
+        let payload = json!({"currentSchema": schema});
+        self.set_attributes(payload)
+    }
+
     /// Sets connection attributes
-    ///
-    /// insert example
-    ///
-    ///
-    pub fn set_attributes(&mut self, attrs: Value) -> Result<()> {
-        (*self.con).borrow_mut().set_attributes(attrs)
+    fn set_attributes(&mut self, attr: Value) -> Result<()> {
+        (*self.con).borrow_mut().set_attributes(attr)
     }
 }
 
@@ -73,19 +125,20 @@ impl Connection {
 #[derive(Debug)]
 pub(crate) struct ConnectionImpl {
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
+    attr: HashMap<String, Value>,
 }
 
 impl Drop for ConnectionImpl {
     /// Implementing drop to properly get rid of the connection and its components
     fn drop(&mut self) {
         // Closing session on Exasol side
-        self.do_request(json!({"command": "disconnect"}));
+        self.do_request(json!({"command": "disconnect"})).ok();
 
         // Sending Message::Close frame
-        self.ws.close(None);
+        self.ws.close(None).ok();
 
         // Reading the Message::Close frame sent by server
-        self.ws.read_message();
+        self.ws.read_message().ok();
 
         // It is now safe to drop the socket
     }
@@ -94,14 +147,10 @@ impl Drop for ConnectionImpl {
 impl ConnectionImpl {
     /// Attempts to create the websocket, authenticate in Exasol
     /// and read the connection attributes afterwards.
-    pub(crate) fn connect(
-        dsn: &str,
-        schema: &str,
-        user: &str,
-        password: &str,
-    ) -> Result<ConnectionImpl> {
+    pub(crate) fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<ConnectionImpl> {
         let (ws, _) = connect(Url::parse(dsn)?)?;
-        let mut con = ConnectionImpl { ws };
+        let attr = HashMap::new();
+        let mut con = ConnectionImpl { ws, attr };
 
         con.login(schema, user, password)?;
         con.get_attributes()?;
@@ -177,7 +226,7 @@ impl ConnectionImpl {
     pub(crate) fn do_request(&mut self, payload: Value) -> Result<Option<Value>> {
         self.send(payload)
             .and_then(|_| self.recv())
-            .and_then(|data| ConnectionImpl::validate(data))
+            .and_then(|data| self.validate(data))
     }
 
     /// Gets the database results as Results (that's what they deserialize into)
@@ -215,8 +264,11 @@ impl ConnectionImpl {
     }
 
     /// Consumes the response JSON while checking the status
-    /// Returns an Option with the responseData field, attributes field or None
-    fn validate(mut json_data: Value) -> Result<Option<Value>> {
+    /// If no error occurred, returns an Option with the responseData field (if found) or None
+    ///
+    /// Additionally, attributes can be returned from any request
+    /// so this checks if any were returned and updates the stored attributes
+    fn validate(&mut self, mut json_data: Value) -> Result<Option<Value>> {
         let status = ConnectionImpl::extract_value(&mut json_data, "status")?
             .as_str()
             .ok_or(Error::InvalidResponse(
@@ -226,14 +278,16 @@ impl ConnectionImpl {
 
         match status.as_str() {
             "ok" => {
-                if let Ok(data) = ConnectionImpl::extract_value(&mut json_data, "responseData") {
-                    Ok(Some(data))
-                } else if let Ok(attr) = ConnectionImpl::extract_value(&mut json_data, "attributes")
-                {
-                    Ok(Some(attr))
-                } else {
-                    Ok(None)
-                }
+                // Extract attributes, if found, and update the attributes map
+                ConnectionImpl::extract_value(&mut json_data, "attributes")
+                    .and_then(|v| Ok(serde_json::from_value::<HashMap<String, Value>>(v)?))
+                    .map(|m| self.attr.extend(m))
+                    .ok();
+
+                // Extract the responseData and return it
+                // If not found, return None.
+                ConnectionImpl::extract_value(&mut json_data, "responseData")
+                    .map_or(Ok(None), |v| Ok(Some(v)))
             }
             "error" => {
                 let exception: Value = ConnectionImpl::extract_value(&mut json_data, "exception")?;
