@@ -6,7 +6,6 @@
 mod error;
 mod connection;
 mod query_result;
-mod macros;
 mod params;
 
 pub mod exasol {

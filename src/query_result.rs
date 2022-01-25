@@ -1,10 +1,8 @@
-use std::cell::{Ref, RefCell};
-use std::cmp::Ordering;
-use std::convert::Infallible;
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::vec::IntoIter;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::connection::ConnectionImpl;
@@ -15,6 +13,7 @@ pub type Row = Vec<Value>;
 /// Struct used for deserialization of the JSON
 /// returned after executing one or more queries
 /// Represents the collection of results from all queries.
+#[allow(unused)]
 #[derive(Deserialize)]
 pub(crate) struct Results {
     #[serde(rename = "numResults")]
@@ -25,7 +24,7 @@ pub(crate) struct Results {
 
 impl Results {
     /// Consumes self, as it's useless after deserialization, to return a vector of QueryResults
-    pub(crate) fn consume(mut self, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Vec<QueryResult> {
+    pub(crate) fn consume(self, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Vec<QueryResult> {
         self.query_results
             .into_iter()
             .map(|q| match q {
@@ -51,6 +50,7 @@ impl Results {
 }
 
 #[test]
+#[allow(unused)]
 fn deserialize_results() {
     let result = json!({
        "numResults":1,
@@ -95,6 +95,7 @@ pub enum QueryResult {
 /// Struct used for deserialization of the JSON
 /// returned sending queries to the database.
 /// Represents the result of one query.
+#[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "resultType")]
 pub(crate) enum QueryResultImpl {
@@ -105,6 +106,7 @@ pub(crate) enum QueryResultImpl {
 }
 
 #[test]
+#[allow(unused)]
 fn deser_query_result1() {
     let json_data = json!({
     "resultSet":{
@@ -134,6 +136,7 @@ fn deser_query_result1() {
 }
 
 #[test]
+#[allow(unused)]
 fn deser_query_result2() {
     let json_data = json!(
     {
@@ -148,6 +151,7 @@ fn deser_query_result2() {
 ///
 /// insert example
 ///
+#[allow(unused)]
 #[derive(Debug)]
 pub struct ResultSet {
     num_columns: u8,
@@ -199,7 +203,7 @@ impl ResultSet {
                 // Compose the payload
                 let payload = json!({
                     "command": "fetch",
-                    "resultSetHandle": self.statement_handle,
+                    "resultSetHandle": h,
                     "startPosition": self.total_rows_pos,
                     "numBytes": 5 * 1024 * 1024,
                 });
@@ -249,7 +253,7 @@ impl Iterator for ResultSet {
 
 impl Drop for ResultSet {
     fn drop(&mut self) {
-        self.close();
+        self.close().ok();
     }
 }
 
@@ -270,6 +274,7 @@ pub(crate) struct ResultSetImpl {
 }
 
 #[test]
+#[allow(unused)]
 fn deser_result_set() {
     let json_data = json!(
        {
@@ -307,6 +312,7 @@ struct FetchedData {
 }
 
 #[test]
+#[allow(unused)]
 fn deser_fetched_data() {
     let json_data = json!(
         {
@@ -319,6 +325,7 @@ fn deser_fetched_data() {
 }
 
 /// A struct containing the name and datatype (as seen in Exasol) of a given column
+#[allow(unused)]
 #[derive(Debug, Deserialize)]
 pub struct Column {
     name: String,
@@ -327,6 +334,7 @@ pub struct Column {
 }
 
 #[test]
+#[allow(unused)]
 fn deser_column() {
     let json_data = json!(
     {
@@ -343,6 +351,7 @@ fn deser_column() {
 }
 
 #[test]
+#[allow(unused)]
 fn deser_columns() {
     let json_data = json!([
     {

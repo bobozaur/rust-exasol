@@ -1,6 +1,5 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::Display;
 
 #[test]
 fn param_iter_test() {

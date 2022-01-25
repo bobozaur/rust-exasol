@@ -1,4 +1,3 @@
-use std::error;
 use std::fmt::{Debug, Display, Formatter};
 use serde::{Serialize, Deserialize};
 use serde_json;
