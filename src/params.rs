@@ -1,5 +1,66 @@
+use crate::error::{Error, Result};
+use lazy_static::lazy_static;
+use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
+
+/// Binds named parameters from a construct implementing `ParameterMap` to the given string.
+/// Returns a Result containing the formatted string or an Error if any parameters are missing.
+///
+/// ```
+/// use serde_json::json;
+/// use exasol::exasol::bind;
+///
+/// let j = json!({
+///     "COL1": "TEST",
+///     "COL2": 5
+/// });
+///
+/// let params = j.as_object().unwrap();
+///
+/// let query = "INSERT INTO MY_TABLE VALUES(:COL1, :COL2);";
+/// let new_query = bind(query, params).unwrap();
+///
+/// assert_eq!("INSERT INTO MY_TABLE VALUES('TEST', 5);", new_query);
+/// ```
+///
+/// ```
+/// use std::collections::HashMap;
+/// use exasol::exasol::bind;
+///
+/// let params = HashMap::from([
+///     ("COL1".to_owned(), "VALUE1"),
+///     ("COL2".to_owned(), "VALUE2")
+/// ]);
+///
+/// let query = "INSERT INTO MY_TABLE VALUES(:COL1, :COL2);";
+/// let new_query = bind(query, params).unwrap();
+///
+/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE1', 'VALUE2');", new_query);
+/// ```
+pub fn bind<T>(query: &str, params: T) -> Result<String>
+where
+    T: ParameterMap,
+{
+    lazy_static! {
+        static ref RE: Regex = Regex::new(r":(\w+)").unwrap();
+    }
+
+    let map = params.as_params_map();
+    let mut final_query= query.to_owned();
+
+    for s in RE.find_iter(query).map(|m| m.as_str()) {
+        let re = Regex::new(s).unwrap();
+        let field = &s[1..];
+        let sub = map
+            .get(field)
+            .ok_or(Error::InvalidResponse(format!("{} not found in map!", field)))?;
+
+        final_query = re.replace_all(&final_query, sub).to_string();
+    }
+
+    Ok(final_query)
+}
 
 #[test]
 fn param_iter_test() {
@@ -251,6 +312,20 @@ impl SQLParameter for Value {
     }
 }
 
+impl<T> SQLParameter for &T
+where T: SQLParameter {
+    fn as_sql_param(&self) -> String {
+        self.clone().as_sql_param()
+    }
+}
+
+impl<T> SQLParameter for &mut T
+where T: SQLParameter {
+    fn as_sql_param(&self) -> String {
+        self.clone().as_sql_param()
+    }
+}
+
 /// Used to enable structs to be transposed as parameter maps ready use bind in a SQL query
 /// ```
 /// use std::collections::HashMap;
@@ -319,10 +394,9 @@ where
     }
 }
 
-impl<'a, T, I> ParameterMap for &'a I
-where
-    T: 'a + SQLParameter,
-    I: Copy + IntoIterator<Item = (&'a String, &'a T)>,
+impl<I, T> ParameterMap for &I
+    where for<'a> &'a I: IntoIterator<Item = (&'a String, &'a T)>,
+        for <'b> &'b T: SQLParameter
 {
     fn as_params_map(self) -> HashMap<String, String> {
         self.into_iter()
@@ -331,10 +405,9 @@ where
     }
 }
 
-impl<'a, T, I> ParameterMap for &'a mut I
-where
-    T: 'a + SQLParameter,
-    I: Copy + IntoIterator<Item = (&'a String, &'a mut T)>,
+impl<I, T> ParameterMap for &mut I
+    where for<'a> &'a I: IntoIterator<Item = (&'a String, &'a T)>,
+        for <'b> &'b T: SQLParameter
 {
     fn as_params_map(self) -> HashMap<String, String> {
         self.into_iter()
