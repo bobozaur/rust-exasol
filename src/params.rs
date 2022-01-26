@@ -12,16 +12,16 @@ use std::collections::{BTreeMap, HashMap};
 /// use exasol::exasol::bind;
 ///
 /// let j = json!({
-///     "COL1": "TEST",
+///     "COL1": "'TEST",
 ///     "COL2": 5
 /// });
 ///
 /// let params = j.as_object().unwrap();
 ///
-/// let query = "INSERT INTO MY_TABLE VALUES(:COL1, :COL2);";
+/// let query = "INSERT INTO MY_TABLE VALUES(:COL1, :COL1, :COL2);";
 /// let new_query = bind(query, params).unwrap();
 ///
-/// assert_eq!("INSERT INTO MY_TABLE VALUES('TEST', 5);", new_query);
+/// assert_eq!("INSERT INTO MY_TABLE VALUES('''TEST', '''TEST', 5);", new_query);
 /// ```
 ///
 /// ```
@@ -47,16 +47,16 @@ where
     }
 
     let map = params.as_params_map();
-    let mut final_query= query.to_owned();
+    let mut final_query = query.to_owned();
 
     for s in RE.find_iter(query).map(|m| m.as_str()) {
-        let re = Regex::new(s).unwrap();
         let field = &s[1..];
-        let sub = map
-            .get(field)
-            .ok_or(Error::InvalidResponse(format!("{} not found in map!", field)))?;
+        let sub = map.get(field).ok_or(Error::InvalidResponse(format!(
+            "{} not found in map!",
+            field
+        )))?;
 
-        final_query = re.replace_all(&final_query, sub).to_string();
+        final_query = final_query.replace(s, sub);
     }
 
     Ok(final_query)
@@ -121,6 +121,20 @@ where
     param_iter(m, |(_, val)| val.as_sql_param())
 }
 
+/// Used for transposing a string to an escaped SQL parameter
+fn param_str(s: &str) -> String {
+    format!("'{}'", s.replace("'", "''"))
+}
+
+/// Used for transposing a bool to an SQL parameter
+fn param_bool(b: &bool) -> String {
+    if *b {
+        "1".to_owned()
+    } else {
+        "0".to_owned()
+    }
+}
+
 /// Used to provide a mechanism for generating a String as a SQL parameter out of self.
 /// Can be implemented to custom types to generate values as needed.
 /// ```
@@ -168,23 +182,19 @@ impl SQLParameter for () {
 
 impl SQLParameter for bool {
     fn as_sql_param(&self) -> String {
-        if *self {
-            "1".to_owned()
-        } else {
-            "0".to_owned()
-        }
+        param_bool(self)
     }
 }
 
 impl SQLParameter for &str {
     fn as_sql_param(&self) -> String {
-        format!("'{}'", self)
+        param_str(self)
     }
 }
 
 impl SQLParameter for String {
     fn as_sql_param(&self) -> String {
-        format!("'{}'", self)
+        param_str(self)
     }
 }
 
@@ -303,9 +313,9 @@ impl SQLParameter for Value {
     fn as_sql_param(&self) -> String {
         match self {
             Value::Null => "NULL".to_owned(),
-            Value::String(s) => format!("'{}'", s),
-            Value::Number(n) => format!("{}", n),
-            Value::Bool(b) => format!("{}", if *b { 1 } else { 0 }),
+            Value::String(s) => param_str(s),
+            Value::Number(n) => n.to_string(),
+            Value::Bool(b) => param_bool(b),
             Value::Array(a) => param_array(a),
             Value::Object(o) => param_map(o),
         }
@@ -313,14 +323,18 @@ impl SQLParameter for Value {
 }
 
 impl<T> SQLParameter for &T
-where T: SQLParameter {
+where
+    T: SQLParameter,
+{
     fn as_sql_param(&self) -> String {
         self.clone().as_sql_param()
     }
 }
 
 impl<T> SQLParameter for &mut T
-where T: SQLParameter {
+where
+    T: SQLParameter,
+{
     fn as_sql_param(&self) -> String {
         self.clone().as_sql_param()
     }
@@ -395,8 +409,9 @@ where
 }
 
 impl<I, T> ParameterMap for &I
-    where for<'a> &'a I: IntoIterator<Item = (&'a String, &'a T)>,
-        for <'b> &'b T: SQLParameter
+where
+    for<'a> &'a I: IntoIterator<Item = (&'a String, &'a T)>,
+    for<'b> &'b T: SQLParameter,
 {
     fn as_params_map(self) -> HashMap<String, String> {
         self.into_iter()
@@ -406,8 +421,9 @@ impl<I, T> ParameterMap for &I
 }
 
 impl<I, T> ParameterMap for &mut I
-    where for<'a> &'a I: IntoIterator<Item = (&'a String, &'a T)>,
-        for <'b> &'b T: SQLParameter
+where
+    for<'a> &'a I: IntoIterator<Item = (&'a String, &'a T)>,
+    for<'b> &'b T: SQLParameter,
 {
     fn as_params_map(self) -> HashMap<String, String> {
         self.into_iter()
