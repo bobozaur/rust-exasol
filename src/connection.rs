@@ -62,7 +62,7 @@ impl Connection {
     /// Ping the server and wait for Pong frame
     ///
     /// ```
-    /// # use exasol::exasol::{Connection};
+    /// # use exasol::{Connection};
     /// # use std::env;
     /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -80,7 +80,7 @@ impl Connection {
     /// Sets autocommit mode On or Off
     ///
     /// ```
-    /// # use exasol::exasol::{Connection};
+    /// # use exasol::{Connection};
     /// # use std::env;
     /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -99,7 +99,7 @@ impl Connection {
     /// Sets the query timeout
     ///
     /// ```
-    /// # use exasol::exasol::{Connection};
+    /// # use exasol::{Connection};
     /// # use std::env;
     /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -118,7 +118,7 @@ impl Connection {
     /// Sets the currently open schema
     ///
     /// ```
-    /// # use exasol::exasol::{Connection};
+    /// # use exasol::{Connection};
     /// # use std::env;
     /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();

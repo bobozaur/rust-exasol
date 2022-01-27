@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 ///
 /// ```
 /// use serde_json::json;
-/// use exasol::exasol::bind;
+/// use exasol::bind;
 ///
 /// let j = json!({
 ///     "COL1": "'TEST",
@@ -26,7 +26,7 @@ use std::collections::{BTreeMap, HashMap};
 ///
 /// ```
 /// use std::collections::HashMap;
-/// use exasol::exasol::bind;
+/// use exasol::bind;
 ///
 /// let params = HashMap::from([
 ///     ("COL1".to_owned(), "VALUE1"),
@@ -150,7 +150,7 @@ pub trait SQLParameter {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("NULL", ().as_sql_param());
 /// ```
 impl SQLParameter for () {
@@ -160,7 +160,7 @@ impl SQLParameter for () {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", true.as_sql_param());
 /// assert_eq!("0", false.as_sql_param());
 /// ```
@@ -171,7 +171,7 @@ impl SQLParameter for bool {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("'1'", "1".as_sql_param());
 /// ```
 impl SQLParameter for &str {
@@ -181,7 +181,7 @@ impl SQLParameter for &str {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("'1'", String::from("1").as_sql_param());
 /// ```
 impl SQLParameter for String {
@@ -190,7 +190,7 @@ impl SQLParameter for String {
     }
 }
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1usize.as_sql_param());
 /// ```
 impl SQLParameter for usize {
@@ -200,7 +200,7 @@ impl SQLParameter for usize {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1u8.as_sql_param());
 /// ```
 impl SQLParameter for u8 {
@@ -210,7 +210,7 @@ impl SQLParameter for u8 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1u16.as_sql_param());
 /// ```
 impl SQLParameter for u16 {
@@ -220,7 +220,7 @@ impl SQLParameter for u16 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1u32.as_sql_param());
 /// ```
 impl SQLParameter for u32 {
@@ -230,7 +230,7 @@ impl SQLParameter for u32 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1u64.as_sql_param());
 /// ```
 impl SQLParameter for u64 {
@@ -240,7 +240,7 @@ impl SQLParameter for u64 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1u128.as_sql_param());
 /// ```
 impl SQLParameter for u128 {
@@ -250,7 +250,7 @@ impl SQLParameter for u128 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1i8.as_sql_param());
 /// ```
 impl SQLParameter for i8 {
@@ -260,7 +260,7 @@ impl SQLParameter for i8 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1i16.as_sql_param());
 /// ```
 impl SQLParameter for i16 {
@@ -270,7 +270,7 @@ impl SQLParameter for i16 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1i32.as_sql_param());
 /// ```
 impl SQLParameter for i32 {
@@ -280,7 +280,7 @@ impl SQLParameter for i32 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1i64.as_sql_param());
 /// ```
 impl SQLParameter for i64 {
@@ -290,7 +290,7 @@ impl SQLParameter for i64 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1i128.as_sql_param());
 /// ```
 impl SQLParameter for i128 {
@@ -300,7 +300,7 @@ impl SQLParameter for i128 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1f32.as_sql_param());
 /// ```
 impl SQLParameter for f32 {
@@ -310,7 +310,7 @@ impl SQLParameter for f32 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 /// assert_eq!("1", 1f64.as_sql_param());
 /// ```
 impl SQLParameter for f64 {
@@ -320,7 +320,7 @@ impl SQLParameter for f64 {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 ///
 /// assert_eq!("(1, 2, 3)", vec![1, 2, 3].as_sql_param());
 /// assert_eq!("('1', '2', '3')", vec!["1", "2", "3"].as_sql_param());
@@ -336,7 +336,7 @@ where
 
 /// ```
 /// use std::collections::HashMap;
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 ///
 /// // Map values are returned just like vectors, but in no particular order
 /// assert_eq!("(1)", HashMap::from([("a", 1)]).as_sql_param());
@@ -380,7 +380,7 @@ impl SQLParameter for Value {
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 ///
 /// // References also work
 /// let x = 5;
@@ -397,7 +397,7 @@ where
 }
 
 /// ```
-/// use exasol::exasol::SQLParameter;
+/// use exasol::SQLParameter;
 ///
 /// // Mutable references also work
 /// let mut x = 5;
@@ -417,7 +417,7 @@ where
 /// ```
 /// use std::collections::HashMap;
 /// use serde_json::{Map, json, Value};
-/// use exasol::exasol::{ParameterMap, SQLParameter};
+/// use exasol::{ParameterMap, SQLParameter};
 ///
 ///let h = HashMap::from([("a".to_owned(), "1"), ("b".to_owned(), "2")]);
 ///let mut j = HashMap::from([("a".to_owned(), "1".to_owned()), ("b".to_owned(), "2".to_owned())]);
