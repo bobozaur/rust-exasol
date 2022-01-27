@@ -131,14 +131,8 @@ pub enum ConnectionError {
     RangeParseError(ParseIntError),
     CryptographyError(rsa::errors::Error),
     PKCSError(rsa::pkcs1::Error),
-    AuthError(RequestError),
+    AuthError(ExaError),
     WebsocketError(tungstenite::error::Error),
-}
-
-impl From<RequestError> for ConnectionError {
-    fn from(e: RequestError) -> Self {
-        Self::AuthError(e)
-    }
 }
 
 impl std::error::Error for ConnectionError {}

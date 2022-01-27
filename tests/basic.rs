@@ -18,7 +18,6 @@ mod tests {
         let password = env::var("EXA_PASSWORD").unwrap();
 
         let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
-        println!("Connected!");
 
         let result = exa_con.execute("SELECT 1").unwrap();
         // println!("{:?}", result);
