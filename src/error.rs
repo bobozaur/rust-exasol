@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Display, Formatter};
+use std::num::ParseIntError;
 use serde::{Serialize, Deserialize};
 use serde_json;
 use serde_json::json;
@@ -11,9 +12,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
+    InvalidDNS,
     InvalidResponse(String),
     DSNError(url::ParseError),
     ConnectionError(tungstenite::error::Error),
+    IOError(std::io::Error),
+    ParseIntError(ParseIntError),
     ParsingError(serde_json::error::Error),
     CryptographyError(rsa::errors::Error),
     PKCSError(rsa::pkcs1::Error),
@@ -26,14 +30,17 @@ impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
                 Self::InvalidResponse(e) => write!(f, "{}", e),
+                Self::InvalidDNS => write!(f, "Invalid DNS provided"),
                 Self::DSNError(e) => write!(f, "{}", e),
                 Self::ConnectionError(e) => write!(f, "{:?}", e),
+                Self::IOError(e) => write!(f, "{}", e),
+                Self::ParseIntError(e) => write!(f, "{}", e),
                 Self::ParsingError(e) => write!(f, "{}", e),
                 Self::CryptographyError(e) => write!(f, "{}", e),
                 Self::PKCSError(e) => write!(f, "{}", e),
                 Self::RequestError(e) |
                 Self::AuthError(e) |
-                Self::QueryError(e) => write!(f, "{}", e)
+                Self::QueryError(e) => write!(f, "{}", e),
             }
     }
 }
@@ -47,6 +54,18 @@ impl From<tungstenite::error::Error> for Error {
 impl From<url::ParseError> for Error {
     fn from(e: url::ParseError) -> Self {
         Self::DSNError(e)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::IOError(e)
+    }
+}
+
+impl From<ParseIntError> for Error {
+    fn from(e: ParseIntError) -> Self {
+        Self::ParseIntError(e)
     }
 }
 

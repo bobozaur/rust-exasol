@@ -49,14 +49,13 @@ where
     let map = params.into_params_map();
     let mut final_query = query.to_owned();
 
-    for s in RE.find_iter(query).map(|m| m.as_str()) {
-        let field = &s[1..];
-        let sub = map.get(field).ok_or(Error::InvalidResponse(format!(
+    for cap in RE.captures_iter(query) {
+        let sub = map.get(&cap[1]).ok_or(Error::InvalidResponse(format!(
             "{} not found in map!",
-            field
+            &cap[1]
         )))?;
 
-        final_query = final_query.replace(s, sub);
+        final_query = final_query.replace(&cap[0], sub);
     }
 
     Ok(final_query)
