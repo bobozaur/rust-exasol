@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::connection::ConnectionImpl;
-use crate::error::{Error, Result};
+use crate::error::{RequestError, Result};
 
 pub type Row = Vec<Value>;
 
@@ -196,9 +196,7 @@ impl ResultSet {
     fn fetch_chunk(&mut self) -> Result<()> {
         // Check the statement handle
         self.statement_handle
-            .ok_or(Error::InvalidResponse(
-                "Cannot fetch rows chunk - missing statement handle".to_owned(),
-            ))
+            .ok_or(RequestError::MissingHandleError.into())
             .and_then(|h| {
                 // Compose the payload
                 let payload = json!({

@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
-use crate::error::{Error, ExaError, Result};
+use crate::error::{ConnectionError, Error, ExaError, RequestError, Result};
 use crate::query_result::{QueryResult, Results};
 
 /// The `Connection` struct will be what we use to interact with the database
@@ -179,14 +179,14 @@ impl ConnectionImpl {
         let addresses = Self::parse_dsn(dsn)?;
 
         // Initializing as generic error to make the compiler happy
-        let mut final_err = Err(Error::InvalidResponse("No hostnames resolved".to_owned()));
+        let mut final_err = Err(ConnectionError::InvalidDSN);
 
         for addr in addresses.into_iter() {
             let url = format!("ws://{}", addr);
 
             let result = Url::parse(&url)
-                .map_err(|e| Error::DSNError(e))
-                .and_then(|u| connect(u).map_err(|e| Error::ConnectionError(e)));
+                .map_err(|e| ConnectionError::DSNParseError(e))
+                .and_then(|u| connect(u).map_err(|e| ConnectionError::WebsocketError(e)));
 
             match result {
                 Ok((ws, _)) => {
@@ -202,7 +202,7 @@ impl ConnectionImpl {
             }
         }
 
-        final_err
+        final_err?
     }
 
     /// Sends the setAttributes request
@@ -234,7 +234,9 @@ impl ConnectionImpl {
                 if 0 < v.len() {
                     Ok(v.swap_remove(0))
                 } else {
-                    Err(Error::InvalidResponse("No result set found".to_owned()))
+                    Err(RequestError::InvalidResponse(
+                        "No result set found".to_owned(),
+                    ))?
                 }
             })
     }
@@ -262,9 +264,9 @@ impl ConnectionImpl {
         self.ws.write_message(Message::Ping(vec![]))?;
         match self.ws.read_message()? {
             Message::Pong(_) => Ok(()),
-            _ => Err(Error::InvalidResponse(
+            _ => Err(RequestError::InvalidResponse(
                 "Received frame different from Pong".to_string(),
-            )),
+            ))?,
         }
     }
 
@@ -274,9 +276,10 @@ impl ConnectionImpl {
         T: for<'de> Deserialize<'de>,
     {
         Ok(serde_json::from_value::<T>(
-            self.do_request(payload)?.ok_or(Error::InvalidResponse(
-                "No response data received".to_owned(),
-            ))?,
+            self.do_request(payload)?
+                .ok_or(RequestError::InvalidResponse(
+                    "No response data received".to_owned(),
+                ))?,
         )?)
     }
 
@@ -329,8 +332,8 @@ impl ConnectionImpl {
     fn validate(&mut self, mut json_data: Value) -> Result<Option<Value>> {
         let status = Self::extract_value(&mut json_data, "status")?
             .as_str()
-            .ok_or(Error::InvalidResponse(
-                "Could not parse status field".to_owned(),
+            .ok_or(RequestError::InvalidResponse(
+                "Returned status field is not a string".to_owned(),
             ))?
             .to_owned();
 
@@ -350,11 +353,11 @@ impl ConnectionImpl {
             "error" => {
                 let exception: Value = Self::extract_value(&mut json_data, "exception")?;
                 let exc: ExaError = serde_json::from_value(exception)?;
-                Err(Error::RequestError(exc))
+                Err(RequestError::ExaError(exc))?
             }
-            _ => Err(Error::InvalidResponse(
-                "Unknown status value not in JSON response".to_owned(),
-            )),
+            _ => Err(RequestError::InvalidResponse(
+                "Unknown status value in JSON response".to_owned(),
+            ))?,
         }
     }
 
@@ -362,7 +365,7 @@ impl ConnectionImpl {
     fn extract_value(data: &mut Value, field: &str) -> Result<Value> {
         Ok(data
             .get_mut(field)
-            .ok_or(Error::InvalidResponse(format!(
+            .ok_or(RequestError::InvalidResponse(format!(
                 "Field '{}' not in JSON response",
                 field
             )))?
@@ -386,47 +389,49 @@ impl ConnectionImpl {
                     ").unwrap();
         }
 
-        RE.captures(dsn).ok_or(Error::InvalidDNS).and_then(|cap| {
-            let hostname_prefix = &cap[1];
-            let start_range = Self::get_dsn_part(&cap, 2);
-            let end_range = Self::get_dsn_part(&cap, 3);
-            let hostname_suffix = Self::get_dsn_part(&cap, 4);
-            let _fingerprint = Self::get_dsn_part(&cap, 5);
-            let port = &cap[6].parse::<u32>().map_or(8563, |x| x);
+        RE.captures(dsn)
+            .ok_or::<Error>(ConnectionError::InvalidDSN.into())
+            .and_then(|cap| {
+                let hostname_prefix = &cap[1];
+                let start_range = Self::get_dsn_part(&cap, 2);
+                let end_range = Self::get_dsn_part(&cap, 3);
+                let hostname_suffix = Self::get_dsn_part(&cap, 4);
+                let _fingerprint = Self::get_dsn_part(&cap, 5);
+                let port = &cap[6].parse::<u32>().map_or(8563, |x| x);
 
-            let mut hosts = vec![];
+                let mut hosts = vec![];
 
-            if start_range.is_empty() {
-                hosts.push(format!("{}{}:{}", hostname_prefix, hostname_suffix, port));
-            } else {
-                let start_range = start_range.parse::<u8>()?;
-                let end_range = end_range.parse::<u8>()?;
+                if start_range.is_empty() {
+                    hosts.push(format!("{}{}:{}", hostname_prefix, hostname_suffix, port));
+                } else {
+                    let start_range = start_range.parse::<u8>()?;
+                    let end_range = end_range.parse::<u8>()?;
 
-                for i in start_range..end_range {
-                    hosts.push(format!(
-                        "{}{}{}:{}",
-                        hostname_prefix, i, hostname_suffix, port
-                    ))
+                    for i in start_range..end_range {
+                        hosts.push(format!(
+                            "{}{}{}:{}",
+                            hostname_prefix, i, hostname_suffix, port
+                        ))
+                    }
                 }
-            }
 
-            let mut addresses = hosts
-                .into_iter()
-                .map(|h| {
-                    Ok(h.to_socket_addrs()?
-                        .map(|ip| ip.to_string().split(":").take(1).collect())
-                        .collect::<Vec<String>>())
-                })
-                .collect::<Result<Vec<Vec<String>>>>()?
-                .into_iter()
-                .flatten()
-                .map(|addr| format!("{}:{}", addr, port))
-                .collect::<Vec<String>>();
+                let mut addresses = hosts
+                    .into_iter()
+                    .map(|h| {
+                        Ok(h.to_socket_addrs()?
+                            .map(|ip| ip.to_string().split(":").take(1).collect())
+                            .collect::<Vec<String>>())
+                    })
+                    .collect::<Result<Vec<Vec<String>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .map(|addr| format!("{}:{}", addr, port))
+                    .collect::<Vec<String>>();
 
-            addresses.shuffle(&mut thread_rng());
+                addresses.shuffle(&mut thread_rng());
 
-            Ok(addresses)
-        })
+                Ok(addresses)
+            })
     }
 
     /// Gets the public key from Exasol
@@ -435,10 +440,13 @@ impl ConnectionImpl {
         let payload = json!({"command": "login", "protocolVersion": 1});
         let pem = self
             .do_request(payload)?
-            .ok_or(Error::InvalidResponse("No data received".to_owned()))
+            .ok_or(RequestError::InvalidResponse("No data received".to_owned()))
+            .map_err(From::from)
             .and_then(|mut data| Self::extract_value(&mut data, "publicKeyPem"))?
             .as_str()
-            .ok_or(Error::InvalidResponse("Malformed public key".to_owned()))?
+            .ok_or(RequestError::InvalidResponse(
+                "Malformed public key".to_owned(),
+            ))?
             .to_owned();
 
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)?)
