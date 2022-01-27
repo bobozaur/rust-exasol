@@ -7,7 +7,7 @@ mod tests {
 
     use serde_json::json;
 
-    use exasol::{Connection, QueryResult, Row};
+    use exasol::{connect, QueryResult, Row};
     use exasol::error::Result;
 
     #[test]
@@ -18,7 +18,7 @@ mod tests {
         let user = env::var("EXA_USER").unwrap();
         let password = env::var("EXA_PASSWORD").unwrap();
 
-        let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
+        let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 
         let result = exa_con.execute("SELECT 1").unwrap();
         // println!("{:?}", result);
@@ -26,14 +26,14 @@ mod tests {
         // println!("{:?}", result);
         let result = exa_con.execute("SELECT * FROM DIM_SIMPLE_DATE WHERE CALENDARYEAR = 2022;").unwrap();
         // println!("{:?}", result);
-        if let QueryResult::ResultSet(r) = result {
-            let x = r.take(5000).collect::<Result<Vec<Row>>>();
-            if let Ok(v) = x {
-                for row in v.iter() {
-                    println!("{:?}", row);
-                }
-            }
-        }
+        // if let QueryResult::ResultSet(r) = result {
+        //     let x = r.take(5000).collect::<Result<Vec<Row>>>();
+        //     if let Ok(v) = x {
+        //         for row in v.iter() {
+        //             println!("{:?}", row);
+        //         }
+        //     }
+        // }
 
         let result = exa_con.execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2").unwrap();
         // println!("{:?}", result);

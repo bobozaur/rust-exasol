@@ -198,18 +198,20 @@ impl ResultSet {
         self.statement_handle
             .ok_or(RequestError::MissingHandleError.into())
             .and_then(|h| {
+                // Dereference connection
+                let mut con = (*self.connection).borrow_mut();
+                let fetch_size = con.attr.get("fetch_size").unwrap();
+
                 // Compose the payload
                 let payload = json!({
                     "command": "fetch",
                     "resultSetHandle": h,
                     "startPosition": self.total_rows_pos,
-                    "numBytes": 5 * 1024 * 1024,
+                    "numBytes": fetch_size,
                 });
 
-                // Dereference connection and get data
-                (*self.connection)
-                    .borrow_mut()
-                    .get_data::<FetchedData>(payload)
+
+                    con.get_data::<FetchedData>(payload)
                     .and_then(|f| {
                         self.chunk_rows_num = f.chunk_rows_num;
                         self.chunk_rows_pos = 0;

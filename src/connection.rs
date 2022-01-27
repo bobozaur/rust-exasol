@@ -1,22 +1,34 @@
-use lazy_static::lazy_static;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::TcpStream;
-use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
-use rand::rngs::OsRng;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
-use regex::{Captures, Regex};
-use rsa::{pkcs1::FromRsaPublicKey, PaddingScheme, PublicKey, RsaPublicKey};
+use rsa::{pkcs1::FromRsaPublicKey, RsaPublicKey};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket};
+use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
+use crate::con_opts::ConOpts;
 use crate::error::{ConnectionError, Error, ExaError, RequestError, Result};
 use crate::query_result::{QueryResult, Results};
+
+/// Convenience function to quickly connect using default options
+///
+/// insert example
+///
+///
+pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
+    let opts = ConOpts {
+        dsn: dsn.to_owned(),
+        schema: schema.to_owned(),
+        user: user.to_owned(),
+        password: password.to_owned(),
+        ..ConOpts::default()
+    };
+
+    Connection::new(opts)
+}
 
 /// The `Connection` struct will be what we use to interact with the database
 ///
@@ -34,10 +46,9 @@ impl Connection {
     /// insert example
     ///
     ///
-    pub fn new(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
-        let con_impl = ConnectionImpl::new(&dsn, &schema, &user, &password)?;
+    pub fn new(opts: ConOpts) -> Result<Connection> {
         Ok(Connection {
-            con: Rc::new(RefCell::new(con_impl)),
+            con: Rc::new(RefCell::new(ConnectionImpl::new(opts)?)),
         })
     }
 
@@ -62,7 +73,7 @@ impl Connection {
     /// Ping the server and wait for Pong frame
     ///
     /// ```
-    /// # use exasol::{Connection};
+    /// # use exasol::connect;
     /// # use std::env;
     /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -70,7 +81,7 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
-    /// # let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.ping().unwrap();
     /// ```
     pub fn ping(&mut self) -> Result<()> {
@@ -80,7 +91,7 @@ impl Connection {
     /// Sets autocommit mode On or Off
     ///
     /// ```
-    /// # use exasol::{Connection};
+    /// # use exasol::connect;
     /// # use std::env;
     /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -88,7 +99,7 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
-    /// # let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_autocommit(false).unwrap();
     /// ```
     pub fn set_autocommit(&mut self, val: bool) -> Result<()> {
@@ -99,7 +110,7 @@ impl Connection {
     /// Sets the query timeout
     ///
     /// ```
-    /// # use exasol::{Connection};
+    /// # use exasol::connect;
     /// # use std::env;
     /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -107,7 +118,7 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
-    /// # let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_query_timeout(60).unwrap();
     /// ```
     pub fn set_query_timeout(&mut self, val: usize) -> Result<()> {
@@ -115,10 +126,23 @@ impl Connection {
         self.set_attributes(payload)
     }
 
+    /// Sets the fetch size in bytes when retrieving `ResultSet` chunks
+    ///
+    /// insert example
+    ///
+    ///
+    pub fn set_fetch_size(&mut self, val: usize) -> Result<()> {
+        (*self.con)
+            .borrow_mut()
+            .attr
+            .insert("fetch_size".to_owned(), json!(val));
+        Ok(())
+    }
+
     /// Sets the currently open schema
     ///
     /// ```
-    /// # use exasol::{Connection};
+    /// # use exasol::connect;
     /// # use std::env;
     /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -126,7 +150,7 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
-    /// # let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_schema(&schema).unwrap();
     /// ```
     pub fn set_schema(&mut self, schema: &str) -> Result<()> {
@@ -148,7 +172,7 @@ impl Connection {
 #[derive(Debug)]
 pub(crate) struct ConnectionImpl {
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
-    attr: HashMap<String, Value>,
+    pub(crate) attr: HashMap<String, Value>,
 }
 
 impl Drop for ConnectionImpl {
@@ -170,13 +194,8 @@ impl Drop for ConnectionImpl {
 impl ConnectionImpl {
     /// Attempts to create the websocket, authenticate in Exasol
     /// and read the connection attributes afterwards.
-    pub(crate) fn new(
-        dsn: &str,
-        schema: &str,
-        user: &str,
-        password: &str,
-    ) -> Result<ConnectionImpl> {
-        let addresses = Self::parse_dsn(dsn)?;
+    pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
+        let addresses = opts.parse_dsn()?;
 
         // Initializing as generic error to make the compiler happy
         let mut final_err = Err(ConnectionError::InvalidDSN);
@@ -186,14 +205,16 @@ impl ConnectionImpl {
 
             let result = Url::parse(&url)
                 .map_err(|e| ConnectionError::DSNParseError(e))
-                .and_then(|u| connect(u).map_err(|e| ConnectionError::WebsocketError(e)));
+                .and_then(|u| {
+                    tungstenite::connect(u).map_err(|e| ConnectionError::WebsocketError(e))
+                });
 
             match result {
                 Ok((ws, _)) => {
                     let attr = HashMap::new();
                     let mut con = ConnectionImpl { ws, attr };
 
-                    con.login(schema, user, password)?;
+                    con.login(opts)?;
                     con.get_attributes()?;
 
                     return Ok(con);
@@ -377,70 +398,6 @@ impl ConnectionImpl {
             )))?
             .take())
     }
-    /// Used for retrieving an optional DSN part, or an empty string if missing
-    fn get_dsn_part<'a>(cap: &'a Captures, index: usize) -> &'a str {
-        cap.get(index).map_or("", |s| s.as_str())
-    }
-
-    /// Parses the provided dsn to expand ranges and resolve IP addresses.
-    /// Connection to all nodes will then be attempted in a random order
-    /// until one is successful or all failed.
-    fn parse_dsn(dsn: &str) -> Result<Vec<String>> {
-        lazy_static! {
-            static ref RE: Regex = Regex::new(r"(?x)
-                    ^(.+?)                     # Hostname prefix
-                    (?:(\d+)\.\.(\d+)(.*?))?   # Optional range and hostname suffix (e.g. myxasol1..4.com)
-                    (?:/([0-9A-Fa-f]+))?       # Optional fingerprint (e.g. myexasol1..4.com/135a1d2dce102de866f58267521f4232153545a075dc85f8f7596f57e588a181)
-                    (?::(\d+)?)?$              # Optional port (e.g. myexasol1..4.com:8564)
-                    ").unwrap();
-        }
-
-        RE.captures(dsn)
-            .ok_or::<Error>(ConnectionError::InvalidDSN.into())
-            .and_then(|cap| {
-                let hostname_prefix = &cap[1];
-                let start_range = Self::get_dsn_part(&cap, 2);
-                let end_range = Self::get_dsn_part(&cap, 3);
-                let hostname_suffix = Self::get_dsn_part(&cap, 4);
-                let _fingerprint = Self::get_dsn_part(&cap, 5);
-                let port = Self::get_dsn_part(&cap, 6)
-                    .parse::<u32>()
-                    .map_or(8563, |x| x);
-
-                let mut hosts = vec![];
-
-                if start_range.is_empty() {
-                    hosts.push(format!("{}{}:{}", hostname_prefix, hostname_suffix, port));
-                } else {
-                    let start_range = start_range.parse::<u8>()?;
-                    let end_range = end_range.parse::<u8>()?;
-
-                    for i in start_range..end_range {
-                        hosts.push(format!(
-                            "{}{}{}:{}",
-                            hostname_prefix, i, hostname_suffix, port
-                        ))
-                    }
-                }
-
-                let mut addresses = hosts
-                    .into_iter()
-                    .map(|h| {
-                        Ok(h.to_socket_addrs()?
-                            .map(|ip| ip.to_string().split(":").take(1).collect())
-                            .collect::<Vec<String>>())
-                    })
-                    .collect::<Result<Vec<Vec<String>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .map(|addr| format!("{}:{}", addr, port))
-                    .collect::<Vec<String>>();
-
-                addresses.shuffle(&mut thread_rng());
-
-                Ok(addresses)
-            })
-    }
 
     /// Gets the public key from Exasol
     /// Used during authentication for encrypting the password
@@ -460,34 +417,30 @@ impl ConnectionImpl {
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)?)
     }
 
-    /// Encrypts the password with the provided key
-    fn encrypt_password(password: &str, public_key: RsaPublicKey) -> Result<String> {
-        let mut rng = OsRng;
-        let padding = PaddingScheme::new_pkcs1v15_encrypt();
-        let enc_password =
-            base64::encode(public_key.encrypt(&mut rng, padding, password.as_bytes())?);
-        Ok(enc_password)
-    }
-
     /// Authenticates to Exasol
     /// Called after the websocket is established
-    fn login(&mut self, schema: &str, user: &str, password: &str) -> Result<Option<Value>> {
-        let public_key = self.get_public_key()?;
-        let enc_password = Self::encrypt_password(password, public_key)?;
+    fn login(&mut self, opts: ConOpts) -> Result<Option<Value>> {
+        // Encrypt password using server's public key
+        let enc_password = self
+            .get_public_key()
+            .and_then(|k| opts.encrypt_password(k))?;
+
+        // Retain the result set fetch size in bytes
+        self.attr.insert("fetch_size".to_owned(), json!(opts.fetch_size));
 
         let payload = json!({
-        "username": user,
+        "username": opts.user,
         "password": enc_password,
-        "driverName": "RustEXASOL 0.01",
-        "clientName": "RustEXASOL 0.01",
-        "clientVersion": "0.0.1",
-        "clientOs": std::env::consts::OS,
+        "driverName": &opts.client_name,
+        "clientName": &opts.client_name,
+        "clientVersion": opts.client_version,
+        "clientOs": opts.client_os,
         "clientRuntime": "Rust",
-        "useCompression": false,
+        "useCompression": opts.use_compression,
         "attributes": {
-                    "currentSchema": schema,
-                    "autocommit": true,
-                    "queryTimeout": 0
+                    "currentSchema": opts.schema,
+                    "autocommit": opts.autocommit,
+                    "queryTimeout": opts.query_timeout
                     }
         });
 
