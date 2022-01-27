@@ -12,12 +12,12 @@ mod tests {
     #[test]
     #[allow(unused)]
     fn it_works() {
-        let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+        let dsn = format!("{}", env::var("EXA_DSN").unwrap());
         let schema = env::var("EXA_SCHEMA").unwrap();
         let user = env::var("EXA_USER").unwrap();
         let password = env::var("EXA_PASSWORD").unwrap();
 
-        let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+        let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
         println!("Connected!");
 
         let result = exa_con.execute("SELECT 1").unwrap();

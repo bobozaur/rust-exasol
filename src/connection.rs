@@ -1,9 +1,14 @@
+use lazy_static::lazy_static;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::net::TcpStream;
+use std::net::ToSocketAddrs;
 use std::rc::Rc;
 
 use rand::rngs::OsRng;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+use regex::{Captures, Regex};
 use rsa::{pkcs1::FromRsaPublicKey, PaddingScheme, PublicKey, RsaPublicKey};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -29,8 +34,8 @@ impl Connection {
     /// insert example
     ///
     ///
-    pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
-        let con_impl = ConnectionImpl::connect(&dsn, &schema, &user, &password)?;
+    pub fn new(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
+        let con_impl = ConnectionImpl::new(&dsn, &schema, &user, &password)?;
         Ok(Connection {
             con: Rc::new(RefCell::new(con_impl)),
         })
@@ -60,12 +65,12 @@ impl Connection {
     /// # use exasol::exasol::{Connection};
     /// # use std::env;
     /// #
-    /// # let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+    /// # let dsn = env::var("EXA_DSN").unwrap();
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
-    /// # let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+    /// # let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.ping().unwrap();
     /// ```
     pub fn ping(&mut self) -> Result<()> {
@@ -78,16 +83,16 @@ impl Connection {
     /// # use exasol::exasol::{Connection};
     /// # use std::env;
     /// #
-    /// # let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+    /// # let dsn = env::var("EXA_DSN").unwrap();
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
-    /// # let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+    /// # let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_autocommit(false).unwrap();
     /// ```
     pub fn set_autocommit(&mut self, val: bool) -> Result<()> {
-        let payload = json!({"autocommit": val});
+        let payload = json!({ "autocommit": val });
         self.set_attributes(payload)
     }
 
@@ -97,16 +102,16 @@ impl Connection {
     /// # use exasol::exasol::{Connection};
     /// # use std::env;
     /// #
-    /// # let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+    /// # let dsn = env::var("EXA_DSN").unwrap();
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
-    /// # let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+    /// # let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_query_timeout(60).unwrap();
     /// ```
     pub fn set_query_timeout(&mut self, val: usize) -> Result<()> {
-        let payload = json!({"queryTimeout": val});
+        let payload = json!({ "queryTimeout": val });
         self.set_attributes(payload)
     }
 
@@ -116,16 +121,16 @@ impl Connection {
     /// # use exasol::exasol::{Connection};
     /// # use std::env;
     /// #
-    /// # let dsn = format!("ws://{}", env::var("EXA_DSN").unwrap());
+    /// # let dsn = env::var("EXA_DSN").unwrap();
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
-    /// # let mut exa_con = Connection::connect(&dsn, &schema, &user, &password).unwrap();
+    /// # let mut exa_con = Connection::new(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_schema(&schema).unwrap();
     /// ```
     pub fn set_schema(&mut self, schema: &str) -> Result<()> {
-        let payload = json!({"currentSchema": schema});
+        let payload = json!({ "currentSchema": schema });
         self.set_attributes(payload)
     }
 
@@ -165,15 +170,39 @@ impl Drop for ConnectionImpl {
 impl ConnectionImpl {
     /// Attempts to create the websocket, authenticate in Exasol
     /// and read the connection attributes afterwards.
-    pub(crate) fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<ConnectionImpl> {
-        let (ws, _) = connect(Url::parse(dsn)?)?;
-        let attr = HashMap::new();
-        let mut con = ConnectionImpl { ws, attr };
+    pub(crate) fn new(
+        dsn: &str,
+        schema: &str,
+        user: &str,
+        password: &str,
+    ) -> Result<ConnectionImpl> {
+        let addresses = Self::parse_dsn(dsn)?;
 
-        con.login(schema, user, password)?;
-        con.get_attributes()?;
+        // Initializing as generic error to make the compiler happy
+        let mut final_err = Err(Error::InvalidResponse("No hostnames resolved".to_owned()));
 
-        Ok(con)
+        for addr in addresses.into_iter() {
+            let url = format!("ws://{}", addr);
+
+            let result = Url::parse(&url)
+                .map_err(|e| Error::DSNError(e))
+                .and_then(|u| connect(u).map_err(|e| Error::ConnectionError(e)));
+
+            match result {
+                Ok((ws, _)) => {
+                    let attr = HashMap::new();
+                    let mut con = ConnectionImpl { ws, attr };
+
+                    con.login(schema, user, password)?;
+                    con.get_attributes()?;
+
+                    return Ok(con);
+                }
+                Err(e) => final_err = Err(e),
+            }
+        }
+
+        final_err
     }
 
     /// Sends the setAttributes request
@@ -229,11 +258,13 @@ impl ConnectionImpl {
     }
 
     /// Ping the server and waits for a Pong frame
-    pub(crate) fn ping(&mut self) -> Result<()>{
+    pub(crate) fn ping(&mut self) -> Result<()> {
         self.ws.write_message(Message::Ping(vec![]))?;
         match self.ws.read_message()? {
             Message::Pong(_) => Ok(()),
-            _ => Err(Error::InvalidResponse("Received frame different from Pong".to_string()))
+            _ => Err(Error::InvalidResponse(
+                "Received frame different from Pong".to_string(),
+            )),
         }
     }
 
@@ -296,7 +327,7 @@ impl ConnectionImpl {
     /// Additionally, attributes can be returned from any request
     /// so this checks if any were returned and updates the stored attributes
     fn validate(&mut self, mut json_data: Value) -> Result<Option<Value>> {
-        let status = ConnectionImpl::extract_value(&mut json_data, "status")?
+        let status = Self::extract_value(&mut json_data, "status")?
             .as_str()
             .ok_or(Error::InvalidResponse(
                 "Could not parse status field".to_owned(),
@@ -306,18 +337,18 @@ impl ConnectionImpl {
         match status.as_str() {
             "ok" => {
                 // Extract attributes, if found, and update the attributes map
-                ConnectionImpl::extract_value(&mut json_data, "attributes")
+                Self::extract_value(&mut json_data, "attributes")
                     .and_then(|v| Ok(serde_json::from_value::<HashMap<String, Value>>(v)?))
                     .map(|m| self.attr.extend(m))
                     .ok();
 
                 // Extract the responseData and return it
                 // If not found, return None.
-                ConnectionImpl::extract_value(&mut json_data, "responseData")
+                Self::extract_value(&mut json_data, "responseData")
                     .map_or(Ok(None), |v| Ok(Some(v)))
             }
             "error" => {
-                let exception: Value = ConnectionImpl::extract_value(&mut json_data, "exception")?;
+                let exception: Value = Self::extract_value(&mut json_data, "exception")?;
                 let exc: ExaError = serde_json::from_value(exception)?;
                 Err(Error::RequestError(exc))
             }
@@ -337,6 +368,66 @@ impl ConnectionImpl {
             )))?
             .take())
     }
+    /// Used for retrieving an optional DSN part, or an empty string if missing
+    fn get_dsn_part<'a>(cap: &'a Captures, index: usize) -> &'a str {
+        cap.get(index).map_or("", |s| s.as_str())
+    }
+
+    /// Parses the provided dsn to expand ranges and resolve IP addresses.
+    /// Connection to all nodes will then be attempted in a random order
+    /// until one is successful or all failed.
+    fn parse_dsn(dsn: &str) -> Result<Vec<String>> {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r"(?x)
+                    ^(.+?)                     # Hostname prefix
+                    (?:(\d+)\.\.(\d+)(.*?))?   # Optional range and hostname suffix (e.g. myxasol1..4.com)
+                    (?:/([0-9A-Fa-f]+))?       # Optional fingerprint (e.g. myexasol1..4.com/135a1d2dce102de866f58267521f4232153545a075dc85f8f7596f57e588a181)
+                    (?::(\d+)?)?$              # Optional port (e.g. myexasol1..4.com:8564)
+                    ").unwrap();
+        }
+
+        RE.captures(dsn).ok_or(Error::InvalidDNS).and_then(|cap| {
+            let hostname_prefix = &cap[1];
+            let start_range = Self::get_dsn_part(&cap, 2);
+            let end_range = Self::get_dsn_part(&cap, 3);
+            let hostname_suffix = Self::get_dsn_part(&cap, 4);
+            let _fingerprint = Self::get_dsn_part(&cap, 5);
+            let port = &cap[6].parse::<u32>().map_or(8563, |x| x);
+
+            let mut hosts = vec![];
+
+            if start_range.is_empty() {
+                hosts.push(format!("{}{}:{}", hostname_prefix, hostname_suffix, port));
+            } else {
+                let start_range = start_range.parse::<u8>()?;
+                let end_range = end_range.parse::<u8>()?;
+
+                for i in start_range..end_range {
+                    hosts.push(format!(
+                        "{}{}{}:{}",
+                        hostname_prefix, i, hostname_suffix, port
+                    ))
+                }
+            }
+
+            let mut addresses = hosts
+                .into_iter()
+                .map(|h| {
+                    Ok(h.to_socket_addrs()?
+                        .map(|ip| ip.to_string().split(":").take(1).collect())
+                        .collect::<Vec<String>>())
+                })
+                .collect::<Result<Vec<Vec<String>>>>()?
+                .into_iter()
+                .flatten()
+                .map(|addr| format!("{}:{}", addr, port))
+                .collect::<Vec<String>>();
+
+            addresses.shuffle(&mut thread_rng());
+
+            Ok(addresses)
+        })
+    }
 
     /// Gets the public key from Exasol
     /// Used during authentication for encrypting the password
@@ -345,7 +436,7 @@ impl ConnectionImpl {
         let pem = self
             .do_request(payload)?
             .ok_or(Error::InvalidResponse("No data received".to_owned()))
-            .and_then(|mut data| ConnectionImpl::extract_value(&mut data, "publicKeyPem"))?
+            .and_then(|mut data| Self::extract_value(&mut data, "publicKeyPem"))?
             .as_str()
             .ok_or(Error::InvalidResponse("Malformed public key".to_owned()))?
             .to_owned();
@@ -366,7 +457,7 @@ impl ConnectionImpl {
     /// Called after the websocket is established
     fn login(&mut self, schema: &str, user: &str, password: &str) -> Result<Option<Value>> {
         let public_key = self.get_public_key()?;
-        let enc_password = ConnectionImpl::encrypt_password(password, public_key)?;
+        let enc_password = Self::encrypt_password(password, public_key)?;
 
         let payload = json!({
         "username": user,
