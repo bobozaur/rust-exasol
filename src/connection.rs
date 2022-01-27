@@ -297,7 +297,13 @@ impl ConnectionImpl {
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         payload: Value,
     ) -> Result<Vec<QueryResult>> {
-        Ok(self.get_data::<Results>(payload)?.consume(con_impl))
+        Ok(self
+            .get_data::<Results>(payload)
+            .map_err(|e| match e {
+                Error::RequestError(RequestError::ExaError(err)) => Error::QueryError(err),
+                _ => e,
+            })?
+            .consume(con_impl))
     }
 
     /// Gets connection attributes from Exasol
@@ -397,7 +403,9 @@ impl ConnectionImpl {
                 let end_range = Self::get_dsn_part(&cap, 3);
                 let hostname_suffix = Self::get_dsn_part(&cap, 4);
                 let _fingerprint = Self::get_dsn_part(&cap, 5);
-                let port = &cap[6].parse::<u32>().map_or(8563, |x| x);
+                let port = Self::get_dsn_part(&cap, 6)
+                    .parse::<u32>()
+                    .map_or(8563, |x| x);
 
                 let mut hosts = vec![];
 
@@ -483,6 +491,11 @@ impl ConnectionImpl {
                     }
         });
 
-        self.do_request(payload)
+        self.do_request(payload).map_err(|e| match e {
+            Error::RequestError(RequestError::ExaError(err)) => {
+                ConnectionError::AuthError(err).into()
+            }
+            _ => e,
+        })
     }
 }
