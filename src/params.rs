@@ -50,10 +50,9 @@ where
     let mut final_query = query.to_owned();
 
     for cap in RE.captures_iter(query) {
-        let sub = map.get(&cap[1]).ok_or(Error::InvalidResponse(format!(
-            "{} not found in map!",
-            &cap[1]
-        )))?;
+        let sub = map
+            .get(&cap[1])
+            .ok_or(Error::BindError(format!("{} not found in map!", &cap[1])))?;
 
         final_query = final_query.replace(&cap[0], sub);
     }
