@@ -4,7 +4,7 @@ use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
 
-/// Binds named parameters from a construct implementing `ParameterMap` to the given string.
+/// Binds named parameters from a construct implementing [ParameterMap] to the given string.
 /// Returns a Result containing the formatted string or an Error if any parameters are missing.
 ///
 /// ```
@@ -143,8 +143,10 @@ fn param_bool(b: bool) -> String {
     }
 }
 
-/// Used to provide a mechanism for generating a String as a SQL parameter out of self.
-/// Can be implemented to custom types to generate values as needed.
+/// Used in default implementations of [ParameterMap] to provide a mechanism
+/// for generating a String as a SQL parameter out of a type.
+///
+/// Can be implemented to other types for custom behaviour.
 pub trait SQLParameter {
     fn as_sql_param(&self) -> String;
 }
@@ -413,7 +415,8 @@ where
     }
 }
 
-/// Used to enable structs to be transposed as parameter maps ready use bind in a SQL query
+/// Used to enable structs to be transposed as parameter maps ready use bind in a SQL query.
+/// Can generally be used along the [SQLParameter] trait to properly generate parameters.
 /// ```
 /// use std::collections::HashMap;
 /// use serde_json::{Map, json, Value};

@@ -85,7 +85,7 @@ fn deserialize_results() {
 }
 
 /// Enum containing the result of a query
-/// `ResultSet` variant holds returned data
+/// `ResultSet` variant holds a [ResultSet]
 /// `RowCount` variant holds the affected row count
 pub enum QueryResult {
     ResultSet(ResultSet),
@@ -156,7 +156,9 @@ fn deser_query_result2() {
     let de: QueryResultImpl = serde_json::from_value(json_data).unwrap();
 }
 
-/// Iterator struct retaining the result set of a given query.
+/// Iterator struct over the result set of a given query.
+/// The maximum data rows that are initially retrieved are 1000.
+/// Further rows get fetched as needed
 ///
 /// ```
 /// # use exasol::{connect, Row, QueryResult};
@@ -179,6 +181,10 @@ fn deser_query_result2() {
 ///         }
 ///     }
 /// ```
+///
+/// The iterator is lazy, and it will retrieve rows in chunks from the database
+/// based on the `fetch_size` parameter set in the [crate::ConOpts] used when constructing
+/// the [crate::Connection], until the result set is entirely read.
 #[allow(unused)]
 pub struct ResultSet {
     num_columns: u8,
@@ -216,8 +222,8 @@ impl ResultSet {
     }
 
     /// Closes the result set if it wasn't already closed
-    /// This method gets called when a `ResultSet` is fully iterated over
-    /// but also when the `ResultSet` is dropped.
+    /// This method gets called when a [ResultSet] is fully iterated over
+    /// but also when the [ResultSet] is dropped.
     fn close(&mut self) -> Result<()> {
         self.statement_handle.map_or(Ok(()), |h| {
             if !self.is_closed {
@@ -257,7 +263,7 @@ impl ResultSet {
     }
 }
 
-/// Making `ResultSet` an iterator
+/// Making [ResultSet] an iterator
 impl Iterator for ResultSet {
     type Item = Result<Row>;
 
