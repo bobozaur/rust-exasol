@@ -16,9 +16,17 @@ use crate::query_result::{QueryResult, Results};
 
 /// Convenience function to quickly connect using default options
 ///
-/// insert example
+/// ```
+/// use exasol::connect;
+/// use std::env;
 ///
+///  let dsn = env::var("EXA_DSN").unwrap();
+///  let schema = env::var("EXA_SCHEMA").unwrap();
+///  let user = env::var("EXA_USER").unwrap();
+///  let password = env::var("EXA_PASSWORD").unwrap();
 ///
+///  let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+/// ```
 pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
     let opts = ConOpts {
         dsn: dsn.to_owned(),
@@ -31,10 +39,10 @@ pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Co
     Connection::new(opts)
 }
 
-/// The `Connection` struct will be what we use to interact with the database
+/// The `Connection` struct will be what we use to interact with the database.
 ///
-/// insert example
-///
+/// A `Rc<RefCell>` is being used internally so that the connection can be shared
+/// with all the result sets retrieved (needed for fetching row chunks).
 ///
 pub struct Connection {
     con: Rc<RefCell<ConnectionImpl>>,
@@ -47,31 +55,71 @@ impl Debug for Connection {
 }
 
 impl Connection {
-    /// Creates the connection
+    /// Creates the connection using the provided options
     ///
-    /// insert example
+    /// ```
+    /// use std::env;
+    /// use exasol::{ConOpts, Connection};
     ///
+    /// let dsn = env::var("EXA_DSN").unwrap();
+    /// let schema = env::var("EXA_SCHEMA").unwrap();
+    /// let user = env::var("EXA_USER").unwrap();
+    /// let password = env::var("EXA_PASSWORD").unwrap();
     ///
+    /// let opts = ConOpts {dsn, user, password, schema, ..ConOpts::default()};
+    /// let mut exa_con = Connection::new(opts).unwrap();
+    /// ```
     pub fn new(opts: ConOpts) -> Result<Connection> {
         Ok(Connection {
             con: Rc::new(RefCell::new(ConnectionImpl::new(opts)?)),
         })
     }
 
-    /// Sends a query to the database and waits for the result.
+    /// Sends a query to the database and waits for the result
     ///
-    /// insert example
+    /// ```
+    /// # use exasol::{connect, Row, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use std::env;
     ///
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
     ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let result = exa_con.execute("SELECT * FROM EXA_ALL_OBJECTS LIMIT 2000;").unwrap();
+    ///
+    /// if let QueryResult::ResultSet(r) = result {
+    ///     let x = r.take(50).collect::<Result<Vec<Row>>>();
+    ///         if let Ok(v) = x {
+    ///             for row in v.iter() {
+    ///                 // do stuff
+    ///             }
+    ///         }
+    ///     }
+    /// ```
     pub fn execute(&mut self, query: &str) -> Result<QueryResult> {
         (*self.con).borrow_mut().execute(&self.con, query)
     }
 
     /// Sends multiple queries to the database and waits for the result.
+    /// Returns a `QueryResult` for each query.
     ///
-    /// insert example
+    /// ```
+    /// # use exasol::{connect, Row, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use std::env;
     ///
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
     ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3", "SELECT 4")).unwrap();
+    /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")).unwrap();
+    /// ```
     pub fn execute_batch(&mut self, queries: Vec<&str>) -> Result<Vec<QueryResult>> {
         (*self.con).borrow_mut().execute_batch(&self.con, queries)
     }
@@ -134,9 +182,19 @@ impl Connection {
 
     /// Sets the fetch size in bytes when retrieving `ResultSet` chunks
     ///
-    /// insert example
-    ///
-    ///
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// // Size is in bytes
+    /// exa_con.set_fetch_size(2 * 1024 * 1024).unwrap();
+    /// ```
     pub fn set_fetch_size(&mut self, val: usize) -> Result<()> {
         (*self.con)
             .borrow_mut()
@@ -177,7 +235,7 @@ impl Connection {
 #[doc(hidden)]
 pub(crate) struct ConnectionImpl {
     pub(crate) attr: HashMap<String, Value>,
-    ws: WebSocket<MaybeTlsStream<TcpStream>>
+    ws: WebSocket<MaybeTlsStream<TcpStream>>,
 }
 
 impl Drop for ConnectionImpl {
@@ -198,7 +256,12 @@ impl Drop for ConnectionImpl {
 
 impl Debug for ConnectionImpl {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let str_attr = self.attr.iter().map(|(k, v)| format!("{}: {}", k, v)).collect::<Vec<String>>().join("\n");
+        let str_attr = self
+            .attr
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k, v))
+            .collect::<Vec<String>>()
+            .join("\n");
         write!(f, "active: {}\n{}", self.ws.can_write(), str_attr)
     }
 }
@@ -438,7 +501,8 @@ impl ConnectionImpl {
             .and_then(|k| opts.encrypt_password(k))?;
 
         // Retain the result set fetch size in bytes
-        self.attr.insert("fetch_size".to_owned(), json!(opts.fetch_size));
+        self.attr
+            .insert("fetch_size".to_owned(), json!(opts.fetch_size));
 
         let payload = json!({
         "username": opts.user,

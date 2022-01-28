@@ -96,7 +96,7 @@ impl Debug for QueryResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ResultSet(r) => write!(f, "{:?}", r),
-            Self::RowCount(c) => write!(f, "Row count: {}", c)
+            Self::RowCount(c) => write!(f, "Row count: {}", c),
         }
     }
 }
@@ -158,8 +158,28 @@ fn deser_query_result2() {
 
 /// Iterator struct retaining the result set of a given query.
 ///
-/// insert example
+/// ```
+/// # use exasol::{connect, Row, QueryResult};
+/// # use exasol::error::Result;
+/// # use std::env;
 ///
+/// # let dsn = env::var("EXA_DSN").unwrap();
+/// # let schema = env::var("EXA_SCHEMA").unwrap();
+/// # let user = env::var("EXA_USER").unwrap();
+/// # let password = env::var("EXA_PASSWORD").unwrap();
+///
+/// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+/// let result = exa_con.execute("SELECT * FROM EXA_ALL_OBJECTS LIMIT 2000;").unwrap();
+///
+/// if let QueryResult::ResultSet(r) = result {
+///     let x = r.take(50).collect::<Result<Vec<Row>>>();
+///         if let Ok(v) = x {
+///             for row in v.iter() {
+///                 // do stuff
+///             }
+///         }
+///     }
+/// ```
 #[allow(unused)]
 pub struct ResultSet {
     num_columns: u8,
@@ -176,8 +196,11 @@ pub struct ResultSet {
 
 impl Debug for ResultSet {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Closed: {}\nHandle: {:?}\nColumns: {:?}\nRows: {}",
-        self.is_closed, self.statement_handle, self.columns, self.total_rows_num)
+        write!(
+            f,
+            "Closed: {}\nHandle: {:?}\nColumns: {:?}\nRows: {}",
+            self.is_closed, self.statement_handle, self.columns, self.total_rows_num
+        )
     }
 }
 
@@ -225,14 +248,12 @@ impl ResultSet {
                     "numBytes": fetch_size,
                 });
 
-
-                    con.get_data::<FetchedData>(payload)
-                    .and_then(|f| {
-                        self.chunk_rows_num = f.chunk_rows_num;
-                        self.chunk_rows_pos = 0;
-                        self.iter = f.data.into_iter().map(|v| v.into_iter()).collect();
-                        Ok(())
-                    })
+                con.get_data::<FetchedData>(payload).and_then(|f| {
+                    self.chunk_rows_num = f.chunk_rows_num;
+                    self.chunk_rows_pos = 0;
+                    self.iter = f.data.into_iter().map(|v| v.into_iter()).collect();
+                    Ok(())
+                })
             })
     }
 }
