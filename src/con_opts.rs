@@ -83,9 +83,9 @@ impl ConOpts {
         lazy_static! {
             static ref RE: Regex = Regex::new(r"(?x)
                     ^(.+?)                     # Hostname prefix
-                    (?:(\d+)\.\.(\d+)(.*?))?   # Optional range and hostname suffix (e.g. myxasol1..4.com)
-                    (?:/([0-9A-Fa-f]+))?       # Optional fingerprint (e.g. myexasol1..4.com/135a1d2dce102de866f58267521f4232153545a075dc85f8f7596f57e588a181)
-                    (?::(\d+)?)?$              # Optional port (e.g. myexasol1..4.com:8564)
+                    (?:(\d+)\.\.(\d+)(.*?))?   # Optional range and hostname suffix (e.g. hostname1..4.com)
+                    (?:/([0-9A-Fa-f]+))?       # Optional fingerprint (e.g. hostname1..4.com/135a1d2dce102de866f58267521f4232153545a075dc85f8f7596f57e588a181)
+                    (?::(\d+)?)?$              # Optional port (e.g. hostname1..4.com:8564)
                     ").unwrap();
         }
 

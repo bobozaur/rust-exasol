@@ -167,7 +167,6 @@ fn deser_query_result2() {
 /// # let schema = env::var("EXA_SCHEMA").unwrap();
 /// # let user = env::var("EXA_USER").unwrap();
 /// # let password = env::var("EXA_PASSWORD").unwrap();
-///
 /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 /// let result = exa_con.execute("SELECT * FROM EXA_ALL_OBJECTS LIMIT 2000;").unwrap();
 ///
