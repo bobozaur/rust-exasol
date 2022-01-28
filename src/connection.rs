@@ -20,12 +20,12 @@ use crate::query_result::{QueryResult, Results};
 /// use exasol::connect;
 /// use std::env;
 ///
-///  let dsn = env::var("EXA_DSN").unwrap();
-///  let schema = env::var("EXA_SCHEMA").unwrap();
-///  let user = env::var("EXA_USER").unwrap();
-///  let password = env::var("EXA_PASSWORD").unwrap();
+/// let dsn = env::var("EXA_DSN").unwrap();
+/// let schema = env::var("EXA_SCHEMA").unwrap();
+/// let user = env::var("EXA_USER").unwrap();
+/// let password = env::var("EXA_PASSWORD").unwrap();
 ///
-///  let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+/// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 /// ```
 pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
     let opts = ConOpts {
@@ -86,7 +86,6 @@ impl Connection {
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
-    ///
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let result = exa_con.execute("SELECT * FROM EXA_ALL_OBJECTS LIMIT 2000;").unwrap();
     ///
@@ -115,7 +114,6 @@ impl Connection {
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
-    ///
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3", "SELECT 4")).unwrap();
     /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")).unwrap();

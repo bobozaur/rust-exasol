@@ -3,11 +3,11 @@
 //! Database connector for Exasol implemented using the Websocket protocol.
 //! Messages are sent and received in the JSON format.
 
-mod con_opts;
-mod connection;
+pub mod con_opts;
+pub mod connection;
 pub mod error;
-mod params;
-mod query_result;
+pub mod params;
+pub mod query_result;
 
 pub use crate::con_opts::ConOpts;
 pub use crate::connection::{connect, Connection};
