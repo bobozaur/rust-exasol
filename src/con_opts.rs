@@ -9,11 +9,11 @@ use std::env;
 use std::fmt::{Display, Formatter};
 use std::net::ToSocketAddrs;
 
-/// Connection options for `Connection`
+/// Connection options for [crate::Connection]
 /// The DSN may or may not contain a port - if it does not,
 /// the port field in this struct is used as a fallback.
 ///
-/// Default is implemented for `ConOpts` so that most fields have fallback values.
+/// Default is implemented for [ConOpts] so that most fields have fallback values.
 /// DSN, user, password and schema fields are practically mandatory,
 /// as they otherwise default to an empty string.
 /// ```

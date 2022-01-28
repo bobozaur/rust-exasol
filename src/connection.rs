@@ -39,11 +39,9 @@ pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Co
     Connection::new(opts)
 }
 
-/// The `Connection` struct will be what we use to interact with the database.
-///
-/// A `Rc<RefCell>` is being used internally so that the connection can be shared
-/// with all the result sets retrieved (needed for fetching row chunks).
-///
+/// The [Connection] struct will be what we use to interact with the database.
+// A Rc<RefCell> is being used internally so that the connection can be shared
+// with all the result sets retrieved (needed for fetching row chunks).
 pub struct Connection {
     con: Rc<RefCell<ConnectionImpl>>,
 }
@@ -103,7 +101,7 @@ impl Connection {
     }
 
     /// Sends multiple queries to the database and waits for the result.
-    /// Returns a `QueryResult` for each query.
+    /// Returns a [QueryResult] for each query.
     ///
     /// ```
     /// # use exasol::{connect, Row, QueryResult};
@@ -178,7 +176,7 @@ impl Connection {
         self.set_attributes(payload)
     }
 
-    /// Sets the fetch size in bytes when retrieving `ResultSet` chunks
+    /// Sets the fetch size in bytes when retrieving [crate::ResultSet] chunks
     ///
     /// ```
     /// # use exasol::connect;
