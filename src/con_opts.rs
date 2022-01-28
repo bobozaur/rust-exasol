@@ -1,13 +1,33 @@
-use std::env;
-use regex::{Regex, Captures};
+use crate::error::{ConnectionError, Error, Result};
 use lazy_static::lazy_static;
-use crate::error::{Error, ConnectionError, Result};
-use rand::{thread_rng};
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom;
-use std::net::ToSocketAddrs;
+use rand::thread_rng;
+use regex::{Captures, Regex};
 use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
+use std::env;
+use std::fmt::{Display, Formatter};
+use std::net::ToSocketAddrs;
 
+/// Connection options for `Connection`
+/// The DSN may or may not contain a port - if it does not,
+/// the port field in this struct is used as a fallback.
+///
+/// Default is implemented for `ConOpts` so that most fields have fallback values.
+/// DSN, user, password and schema fields are practically mandatory,
+/// as they otherwise default to an empty string.
+/// ```
+///  use exasol::ConOpts;
+///
+///  let opts = ConOpts {
+///             dsn: "test_dsn".to_owned(),
+///             user: "test_user".to_owned(),
+///             password: "test_password".to_owned(),
+///             schema: "test_schema".to_owned(),
+///             autocommit: false,
+///             .. ConOpts::default()
+///             };
+/// ```
 #[derive(Debug)]
 pub struct ConOpts {
     pub dsn: String,
@@ -47,6 +67,12 @@ impl Default for ConOpts {
     }
 }
 
+impl Display for ConOpts {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DSN: {}\nUser: {}\n Fallback port: {}\n Client: {}\n Client version: {}\n Fetch size: {}\n Query timeout: {}\n Use compression: {}\n Autocommit: {}",
+        self.dsn, self.user, self.port, self.client_name, self.client_version, self.fetch_size, self.query_timeout, self.use_compression, self.autocommit)
+    }
+}
 
 /// Connection options
 impl ConOpts {
@@ -73,7 +99,7 @@ impl ConOpts {
                 let _fingerprint = Self::get_dsn_part(&cap, 5);
                 let port = Self::get_dsn_part(&cap, 6)
                     .parse::<u32>()
-                    .map_or(8563, |x| x);
+                    .map_or(self.port, |x| x);
 
                 let mut hosts = vec![];
 
