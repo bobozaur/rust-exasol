@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 use std::vec::IntoIter;
 
@@ -86,10 +87,18 @@ fn deserialize_results() {
 /// Enum containing the result of a query
 /// `ResultSet` variant holds returned data
 /// `RowCount` variant holds the affected row count
-#[derive(Debug)]
 pub enum QueryResult {
     ResultSet(ResultSet),
     RowCount(u32),
+}
+
+impl Debug for QueryResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ResultSet(r) => write!(f, "{:?}", r),
+            Self::RowCount(c) => write!(f, "Row count: {}", c)
+        }
+    }
 }
 
 /// Struct used for deserialization of the JSON
@@ -152,7 +161,6 @@ fn deser_query_result2() {
 /// insert example
 ///
 #[allow(unused)]
-#[derive(Debug)]
 pub struct ResultSet {
     num_columns: u8,
     total_rows_num: u32,
@@ -164,6 +172,13 @@ pub struct ResultSet {
     iter: Vec<IntoIter<Value>>,
     connection: Rc<RefCell<ConnectionImpl>>,
     is_closed: bool,
+}
+
+impl Debug for ResultSet {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Closed: {}\nHandle: {:?}\nColumns: {:?}\nRows: {}",
+        self.is_closed, self.statement_handle, self.columns, self.total_rows_num)
+    }
 }
 
 impl ResultSet {

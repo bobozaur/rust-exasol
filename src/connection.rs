@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::net::TcpStream;
 use std::rc::Rc;
 
@@ -35,9 +36,14 @@ pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Co
 /// insert example
 ///
 ///
-#[derive(Debug)]
 pub struct Connection {
     con: Rc<RefCell<ConnectionImpl>>,
+}
+
+impl Debug for Connection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.con.borrow())
+    }
 }
 
 impl Connection {
@@ -169,10 +175,9 @@ impl Connection {
 /// for sharing the connection in multiple ResultSet structs.
 /// They need to own it so that they can use it to further fetch data when iterated.
 #[doc(hidden)]
-#[derive(Debug)]
 pub(crate) struct ConnectionImpl {
-    ws: WebSocket<MaybeTlsStream<TcpStream>>,
     pub(crate) attr: HashMap<String, Value>,
+    ws: WebSocket<MaybeTlsStream<TcpStream>>
 }
 
 impl Drop for ConnectionImpl {
@@ -188,6 +193,13 @@ impl Drop for ConnectionImpl {
         self.ws.read_message().ok();
 
         // It is now safe to drop the socket
+    }
+}
+
+impl Debug for ConnectionImpl {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let str_attr = self.attr.iter().map(|(k, v)| format!("{}: {}", k, v)).collect::<Vec<String>>().join("\n");
+        write!(f, "active: {}\n{}", self.ws.can_write(), str_attr)
     }
 }
 
