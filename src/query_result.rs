@@ -24,8 +24,11 @@ pub(crate) struct Results {
 }
 
 impl Results {
-    /// Consumes self, as it's useless after deserialization, to return a vector of QueryResults
-    pub(crate) fn consume(self, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Vec<QueryResult> {
+    /// Consumes self, as it's useless after deserialization, to return a vector of QueryResults,
+    /// each with a reference to a connection.
+    ///
+    /// The reference is needed for further row fetching.
+    pub(crate) fn parse(self, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Vec<QueryResult> {
         self.query_results
             .into_iter()
             .map(|q| match q {
@@ -42,8 +45,10 @@ impl Results {
                         connection: Rc::clone(con_rc),
                         is_closed: false,
                     };
+
                     QueryResult::ResultSet(r)
                 }
+
                 QueryResultImpl::RowCount { rowCount } => QueryResult::RowCount(rowCount),
             })
             .collect()
@@ -243,6 +248,8 @@ impl ResultSet {
             .and_then(|h| {
                 // Dereference connection
                 let mut con = (*self.connection).borrow_mut();
+
+                // Safe to unwrap as this will always be present due to ConOpts
                 let fetch_size = con.attr.get("fetch_size").unwrap();
 
                 // Compose the payload

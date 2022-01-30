@@ -5,9 +5,48 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use regex::{Captures, Regex};
 use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
+use serde::{Serialize, Serializer};
 use std::env;
 use std::fmt::{Display, Formatter};
 use std::net::ToSocketAddrs;
+
+static DEFAULT_PORT: u32 = 8563;
+static DEFAULT_FETCH_SIZE: u32 = 5 * 1024 * 1024;
+static DEFAULT_CLIENT_PREFIX: &str = "Rust Exasol";
+
+/// Enum listing the protocol versions that can be used when
+/// establishing a websocket connection to Exasol.
+/// Defaults to the highest defined protocol version and
+/// falls back to the highest protocol version supported by the server.
+#[derive(Debug)]
+pub enum ProtocolVersion {
+    V1,
+    V2,
+    V3,
+}
+
+impl Display for ProtocolVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtocolVersion::V1 => write!(f, "1"),
+            ProtocolVersion::V2 => write!(f, "2"),
+            ProtocolVersion::V3 => write!(f, "3"),
+        }
+    }
+}
+
+impl Serialize for ProtocolVersion {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::V1 => serializer.serialize_u8(1u8),
+            Self::V2 => serializer.serialize_u8(2u8),
+            Self::V3 => serializer.serialize_u8(3u8),
+        }
+    }
+}
 
 /// Connection options for [crate::Connection]
 /// The DSN may or may not contain a port - if it does not,
@@ -27,6 +66,15 @@ use std::net::ToSocketAddrs;
 ///             autocommit: false,
 ///             .. ConOpts::default()
 ///             };
+///
+/// // Equivalent to the above
+/// let mut opts = ConOpts::new(); // calls default() under the hood
+///
+/// opts.dsn = "test_dsn".to_owned();
+/// opts.user = "test_user".to_owned();
+/// opts.password = "test_password".to_owned();
+/// opts.schema = "test_schema".to_owned();
+/// opts.autocommit = false;
 /// ```
 #[derive(Debug)]
 pub struct ConOpts {
@@ -35,6 +83,7 @@ pub struct ConOpts {
     pub password: String,
     pub schema: String,
     pub port: u32,
+    pub protocol_version: ProtocolVersion,
     pub client_name: String,
     pub client_version: String,
     pub client_os: String,
@@ -55,11 +104,12 @@ impl Default for ConOpts {
             user: "".to_owned(),
             password: "".to_owned(),
             schema: "".to_owned(),
-            port: 8563,
-            client_name: format!("Rust Exasol {}", crate_version),
+            port: DEFAULT_PORT,
+            protocol_version: ProtocolVersion::V3,
+            client_name: format!("{} {}", DEFAULT_CLIENT_PREFIX, crate_version),
             client_version: crate_version,
             client_os: env::consts::OS.to_owned(),
-            fetch_size: 5 * 1024 * 1024,
+            fetch_size: DEFAULT_FETCH_SIZE,
             query_timeout: 0,
             use_compression: false,
             autocommit: true,
@@ -76,6 +126,11 @@ impl Display for ConOpts {
 
 /// Connection options
 impl ConOpts {
+    /// Creates a default implementation of [ConOpts]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Parses the provided dsn to expand ranges and resolve IP addresses.
     /// Connection to all nodes will then be attempted in a random order
     /// until one is successful or all failed.
