@@ -2,8 +2,13 @@
 name = "exasol"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = ["bobozaur"]
+description = "Exasol client library implemented in Rust."
+license = "MIT"
+repository = "https://github.com/bobozaur/rust-exasol"
+keywords = ["database", "sql", "exasol", "rust"]
+exclude = ["tests/*"]
+categories = ["database"]
 
 [dependencies]
 base64 = "0.20.0-alpha.1"
