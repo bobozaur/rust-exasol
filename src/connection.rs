@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
-use crate::con_opts::ConOpts;
+use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, Error, ExaError, RequestError, Result};
 use crate::query_result::{QueryResult, Results};
 
@@ -382,7 +382,7 @@ impl ConnectionImpl {
             .and_then(|data| self.validate(data))
     }
 
-    /// Gets the database results as Results (that's what they deserialize into)
+    /// Gets the database results as [crate::query_result::Results] (that's what they deserialize into)
     /// and consumes them to return a usable vector of QueryResult enums.
     fn _execute(
         &mut self,
@@ -395,7 +395,7 @@ impl ConnectionImpl {
                 Error::RequestError(RequestError::ExaError(err)) => Error::QueryError(err),
                 _ => e,
             })?
-            .consume(con_impl))
+            .parse(con_impl))
     }
 
     /// Gets connection attributes from Exasol
@@ -472,8 +472,8 @@ impl ConnectionImpl {
 
     /// Gets the public key from Exasol
     /// Used during authentication for encrypting the password
-    fn get_public_key(&mut self) -> Result<RsaPublicKey> {
-        let payload = json!({"command": "login", "protocolVersion": 1});
+    fn get_public_key(&mut self, protocol_version: &ProtocolVersion) -> Result<RsaPublicKey> {
+        let payload = json!({"command": "login", "protocolVersion": protocol_version});
         let pem = self
             .do_request(payload)?
             .ok_or(RequestError::InvalidResponse("No data received".to_owned()))
@@ -493,7 +493,7 @@ impl ConnectionImpl {
     fn login(&mut self, opts: ConOpts) -> Result<Option<Value>> {
         // Encrypt password using server's public key
         let enc_password = self
-            .get_public_key()
+            .get_public_key(&opts.protocol_version)
             .and_then(|k| opts.encrypt_password(k))?;
 
         // Retain the result set fetch size in bytes

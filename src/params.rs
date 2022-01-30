@@ -65,7 +65,7 @@ fn param_iter_test() {
     use super::params::param_iter;
 
     let a = vec![1, 2];
-    assert_eq!("(1, 2)", param_iter(a, |v| v.as_sql_param()));
+    assert_eq!("(1, 2)", param_iter(a, |v| v.to_sql_param()));
 }
 
 /// Used for stringifying an iterator
@@ -97,7 +97,7 @@ where
     T: SQLParameter,
     I: IntoIterator<Item = T>,
 {
-    param_iter(a, |val| val.as_sql_param())
+    param_iter(a, |val| val.to_sql_param())
 }
 
 #[test]
@@ -126,7 +126,7 @@ where
     T: SQLParameter,
     I: IntoIterator<Item = (U, T)>,
 {
-    param_iter(m, |(_, val)| val.as_sql_param())
+    param_iter(m, |(_, val)| val.to_sql_param())
 }
 
 /// Used for transposing a string to an escaped SQL parameter
@@ -148,175 +148,175 @@ fn param_bool(b: bool) -> String {
 ///
 /// Can be implemented to other types for custom behaviour.
 pub trait SQLParameter {
-    fn as_sql_param(&self) -> String;
+    fn to_sql_param(&self) -> String;
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("NULL", ().as_sql_param());
+/// assert_eq!("NULL", ().to_sql_param());
 /// ```
 impl SQLParameter for () {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         "NULL".to_owned()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", true.as_sql_param());
-/// assert_eq!("0", false.as_sql_param());
+/// assert_eq!("1", true.to_sql_param());
+/// assert_eq!("0", false.to_sql_param());
 /// ```
 impl SQLParameter for bool {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         param_bool(*self)
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("'1'", "1".as_sql_param());
+/// assert_eq!("'1'", "1".to_sql_param());
 /// ```
 impl SQLParameter for &str {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         param_str(self)
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("'1'", String::from("1").as_sql_param());
+/// assert_eq!("'1'", String::from("1").to_sql_param());
 /// ```
 impl SQLParameter for String {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         param_str(&self)
     }
 }
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1usize.as_sql_param());
+/// assert_eq!("1", 1usize.to_sql_param());
 /// ```
 impl SQLParameter for usize {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1u8.as_sql_param());
+/// assert_eq!("1", 1u8.to_sql_param());
 /// ```
 impl SQLParameter for u8 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1u16.as_sql_param());
+/// assert_eq!("1", 1u16.to_sql_param());
 /// ```
 impl SQLParameter for u16 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1u32.as_sql_param());
+/// assert_eq!("1", 1u32.to_sql_param());
 /// ```
 impl SQLParameter for u32 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1u64.as_sql_param());
+/// assert_eq!("1", 1u64.to_sql_param());
 /// ```
 impl SQLParameter for u64 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1u128.as_sql_param());
+/// assert_eq!("1", 1u128.to_sql_param());
 /// ```
 impl SQLParameter for u128 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1i8.as_sql_param());
+/// assert_eq!("1", 1i8.to_sql_param());
 /// ```
 impl SQLParameter for i8 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1i16.as_sql_param());
+/// assert_eq!("1", 1i16.to_sql_param());
 /// ```
 impl SQLParameter for i16 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1i32.as_sql_param());
+/// assert_eq!("1", 1i32.to_sql_param());
 /// ```
 impl SQLParameter for i32 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1i64.as_sql_param());
+/// assert_eq!("1", 1i64.to_sql_param());
 /// ```
 impl SQLParameter for i64 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1i128.as_sql_param());
+/// assert_eq!("1", 1i128.to_sql_param());
 /// ```
 impl SQLParameter for i128 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1f32.as_sql_param());
+/// assert_eq!("1", 1f32.to_sql_param());
 /// ```
 impl SQLParameter for f32 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
 /// use exasol::SQLParameter;
-/// assert_eq!("1", 1f64.as_sql_param());
+/// assert_eq!("1", 1f64.to_sql_param());
 /// ```
 impl SQLParameter for f64 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
@@ -324,14 +324,14 @@ impl SQLParameter for f64 {
 /// ```
 /// use exasol::SQLParameter;
 ///
-/// assert_eq!("(1, 2, 3)", vec![1, 2, 3].as_sql_param());
-/// assert_eq!("('1', '2', '3')", vec!["1", "2", "3"].as_sql_param());
+/// assert_eq!("(1, 2, 3)", vec![1, 2, 3].to_sql_param());
+/// assert_eq!("('1', '2', '3')", vec!["1", "2", "3"].to_sql_param());
 /// ```
 impl<T> SQLParameter for Vec<T>
 where
     T: SQLParameter,
 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         param_array(self)
     }
 }
@@ -341,14 +341,14 @@ where
 /// use exasol::SQLParameter;
 ///
 /// // Map values are returned just like vectors, but in no particular order
-/// assert_eq!("(1)", HashMap::from([("a", 1)]).as_sql_param());
-/// assert_eq!("('1')", HashMap::from([("a", "1")]).as_sql_param());
+/// assert_eq!("(1)", HashMap::from([("a", 1)]).to_sql_param());
+/// assert_eq!("('1')", HashMap::from([("a", "1")]).to_sql_param());
 /// ```
 impl<U, T> SQLParameter for HashMap<U, T>
 where
     T: SQLParameter,
 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         param_map(self)
     }
 }
@@ -357,19 +357,19 @@ impl<U, T> SQLParameter for BTreeMap<U, T>
 where
     T: SQLParameter,
 {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         param_map(self)
     }
 }
 
 impl SQLParameter for Map<String, Value> {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         param_map(self)
     }
 }
 
 impl SQLParameter for Value {
-    fn as_sql_param(&self) -> String {
+    fn to_sql_param(&self) -> String {
         match self {
             Value::Null => "NULL".to_owned(),
             Value::String(s) => param_str(&s),
@@ -387,14 +387,14 @@ impl SQLParameter for Value {
 /// // References also work
 /// let x = 5;
 /// let y = &x;
-/// assert_eq!("5", y.as_sql_param());
+/// assert_eq!("5", y.to_sql_param());
 /// ```
 impl<T> SQLParameter for &T
 where
     T: SQLParameter,
 {
-    fn as_sql_param(&self) -> String {
-        (*self).as_sql_param()
+    fn to_sql_param(&self) -> String {
+        (*self).to_sql_param()
     }
 }
 
@@ -404,14 +404,14 @@ where
 /// // Mutable references also work
 /// let mut x = 5;
 /// let y = &mut x;
-/// assert_eq!("5", y.as_sql_param());
+/// assert_eq!("5", y.to_sql_param());
 /// ```
 impl<T> SQLParameter for &mut T
 where
     T: SQLParameter,
 {
-    fn as_sql_param(&self) -> String {
-        (&**self).as_sql_param()
+    fn to_sql_param(&self) -> String {
+        (&**self).to_sql_param()
     }
 }
 
@@ -443,9 +443,9 @@ where
 /// impl ParameterMap for SomeStruct {
 ///     fn into_params_map(self) -> HashMap<String, String> {
 ///        HashMap::from([
-///             ("a".to_owned(), self.a.as_sql_param()),
-///             ("b".to_owned(), self.b.as_sql_param()),
-///             ("c".to_owned(), self.c.as_sql_param()),
+///             ("a".to_owned(), self.a.to_sql_param()),
+///             ("b".to_owned(), self.b.to_sql_param()),
+///             ("c".to_owned(), self.c.to_sql_param()),
 ///         ])
 ///    }
 /// }
@@ -460,7 +460,7 @@ pub trait ParameterMap {
 impl ParameterMap for Map<String, Value> {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
-            .map(|(k, v)| (k, v.as_sql_param()))
+            .map(|(k, v)| (k, v.to_sql_param()))
             .collect()
     }
 }
@@ -471,7 +471,7 @@ where
 {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
-            .map(|(k, v)| (k, v.as_sql_param()))
+            .map(|(k, v)| (k, v.to_sql_param()))
             .collect()
     }
 }
@@ -482,7 +482,7 @@ where
 {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
-            .map(|(k, v)| (k, v.as_sql_param()))
+            .map(|(k, v)| (k, v.to_sql_param()))
             .collect()
     }
 }
@@ -494,7 +494,7 @@ where
 {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
-            .map(|(k, v)| (k.clone(), v.as_sql_param()))
+            .map(|(k, v)| (k.clone(), v.to_sql_param()))
             .collect()
     }
 }
@@ -506,7 +506,7 @@ where
 {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
-            .map(|(k, v)| (k.clone(), v.as_sql_param()))
+            .map(|(k, v)| (k.clone(), v.to_sql_param()))
             .collect()
     }
 }
