@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 use std::vec::IntoIter;
 
@@ -188,8 +188,8 @@ fn deser_query_result2() {
 /// ```
 ///
 /// The iterator is lazy, and it will retrieve rows in chunks from the database
-/// based on the `fetch_size` parameter set in the [crate::ConOpts] used when constructing
-/// the [crate::Connection], until the result set is entirely read.
+/// based on the `fetch_size` parameter set in the [ConOpts](crate::ConOpts) used when constructing
+/// the [Connection](crate::Connection), until the result set is entirely read.
 #[allow(unused)]
 pub struct ResultSet {
     num_columns: u8,
@@ -215,6 +215,21 @@ impl Debug for ResultSet {
 }
 
 impl ResultSet {
+    /// Returns a reference to a [Vec<Column>] of the result set columns
+    pub fn columns(&self) -> &Vec<Column> {
+        &self.columns
+    }
+
+    /// Returns the number of columns in the result set
+    pub fn num_columns(&self) -> &u8 {
+        &self.num_columns
+    }
+
+    /// Returns the number of rows in the result set
+    pub fn num_rows(&self) -> &u32 {
+        &self.total_rows_num
+    }
+
     /// Iterates over the iterator of iterators collecting the next() value of each of them
     /// and composing a row, which it then returns.
     /// If any iterator returns None, None gets returned.
@@ -376,9 +391,15 @@ fn deser_fetched_data() {
 #[allow(unused)]
 #[derive(Debug, Deserialize)]
 pub struct Column {
-    name: String,
+    pub name: String,
     #[serde(rename = "dataType")]
-    datatype: Value,
+    pub datatype: Value,
+}
+
+impl Display for Column {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.name, self.datatype)
+    }
 }
 
 #[test]

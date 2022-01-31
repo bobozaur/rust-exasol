@@ -48,7 +48,7 @@ impl Serialize for ProtocolVersion {
     }
 }
 
-/// Connection options for [crate::Connection]
+/// Connection options for [Connection](crate::Connection)
 /// The DSN may or may not contain a port - if it does not,
 /// the port field in this struct is used as a fallback.
 ///
