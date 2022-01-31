@@ -3,6 +3,11 @@
 //! Database connector for Exasol implemented using the Websocket protocol.
 //! Messages are sent and received in the JSON format.
 //!
+//! # Errors
+//!
+//! Most, if not all, of the public API is implemented to return a [Result](crate::error::Result) due to
+//! the nature of the library. Mentioning this here to avoid repeating the same note on all public functions.
+//!
 //! # Examples
 //!
 //! Using the [connect] function to quickly create a connection.

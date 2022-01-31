@@ -14,8 +14,8 @@ use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, Error, ExaError, RequestError, Result};
 use crate::query_result::{QueryResult, Results};
 
-/// Convenience function to quickly connect using default options
-///
+/// Convenience function to quickly connect using default options.
+/// Returns a [Connection] set using the default [ConOpts]
 /// ```
 /// use exasol::connect;
 /// use std::env;
@@ -53,7 +53,7 @@ impl Debug for Connection {
 }
 
 impl Connection {
-    /// Creates the connection using the provided options
+    /// Creates the [Connection] using the provided [ConOpts].
     ///
     /// ```
     /// use std::env;
@@ -73,7 +73,8 @@ impl Connection {
         })
     }
 
-    /// Sends a query to the database and waits for the result
+    /// Sends a query to the database and waits for the result.
+    /// Returns a [QueryResult]
     ///
     /// ```
     /// # use exasol::{connect, Row, QueryResult};
@@ -101,7 +102,7 @@ impl Connection {
     }
 
     /// Sends multiple queries to the database and waits for the result.
-    /// Returns a [QueryResult] for each query.
+    /// Returns a [Vec<QueryResult>].
     ///
     /// ```
     /// # use exasol::{connect, Row, QueryResult};
@@ -266,35 +267,43 @@ impl ConnectionImpl {
     /// Attempts to create the websocket, authenticate in Exasol
     /// and read the connection attributes afterwards.
     pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
+        // Get list of IP addresses after parsing and resolving DSN
         let addresses = opts.parse_dsn()?;
 
-        // Initializing as generic error to make the compiler happy
-        let mut final_err = Err(ConnectionError::InvalidDSN);
+        // Will loop through all of them until a connection is established
+        let mut try_count = addresses.len();
+        let mut addr_iter = addresses.into_iter();
 
-        for addr in addresses.into_iter() {
-            let url = format!("ws://{}", addr);
+        let ws = loop {
+            try_count -= 1;
 
-            let result = Url::parse(&url)
-                .map_err(|e| ConnectionError::DSNParseError(e))
-                .and_then(|u| {
-                    tungstenite::connect(u).map_err(|e| ConnectionError::WebsocketError(e))
-                });
+            if let Some(addr) = addr_iter.next() {
+                let url = format!("ws://{}", addr);
 
-            match result {
-                Ok((ws, _)) => {
-                    let attr = HashMap::new();
-                    let mut con = ConnectionImpl { ws, attr };
-
-                    con.login(opts)?;
-                    con.get_attributes()?;
-
-                    return Ok(con);
+                match Self::create_websocket(&url) {
+                    Err(e) => {
+                        if try_count <= 0 {
+                            break Err(e);
+                        }
+                    }
+                    Ok(ws) => {
+                        break Ok(ws);
+                    }
                 }
-                Err(e) => final_err = Err(e),
+            } else {
+                // This is only reached if the iterator is empty, hence the DSN is invalid
+                // as it could not be resolved to any IP
+                break Err(Error::ConnectionError(ConnectionError::InvalidDSN));
             }
-        }
+        }?;
 
-        final_err?
+        let attr = HashMap::new();
+        let mut con = ConnectionImpl { ws, attr };
+
+        con.login(opts)?;
+        con.get_attributes()?;
+
+        return Ok(con);
     }
 
     /// Sends the setAttributes request
@@ -380,6 +389,14 @@ impl ConnectionImpl {
         self.send(payload)
             .and_then(|_| self.recv())
             .and_then(|data| self.validate(data))
+    }
+
+    /// Attempts to create a websocket for the given URL
+    fn create_websocket(url: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>> {
+        Ok(Url::parse(&url)
+            .map_err(|e| ConnectionError::DSNParseError(e))
+            .and_then(|u| tungstenite::connect(u).map_err(|e| ConnectionError::WebsocketError(e)))
+            .and_then(|(ws, _)| Ok(ws))?)
     }
 
     /// Gets the database results as [crate::query_result::Results] (that's what they deserialize into)
