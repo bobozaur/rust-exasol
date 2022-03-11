@@ -121,6 +121,7 @@ pub mod connection;
 pub mod error;
 pub mod params;
 pub mod query_result;
+mod response;
 
 pub use crate::con_opts::ConOpts;
 pub use crate::connection::{connect, Connection};

@@ -152,13 +152,6 @@ impl Display for ConnectionError {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ExaError {
-    text: String,
-    #[serde(rename = "sqlCode")]
-    code: String,
-}
-
 impl Display for ExaError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", json!(self))

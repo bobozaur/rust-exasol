@@ -5,14 +5,36 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use regex::{Captures, Regex};
 use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::env;
 use std::fmt::{Display, Formatter};
 use std::net::ToSocketAddrs;
+use serde::de::{self, Visitor};
+use std::fmt;
 
 static DEFAULT_PORT: u32 = 8563;
 static DEFAULT_FETCH_SIZE: u32 = 5 * 1024 * 1024;
 static DEFAULT_CLIENT_PREFIX: &str = "Rust Exasol";
+
+/// Visitor for deserializing JSON into ProtocolVersion values.
+struct ProtocolVersionVisitor;
+
+impl<'de> Visitor<'de> for ProtocolVersionVisitor {
+    type Value = ProtocolVersion;
+
+    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+        formatter.write_str("Expecting an u8 representing the websocket API protocol version.")
+    }
+
+    fn visit_u8<E>(self, v: u8) -> std::result::Result<Self::Value, E> where E: de::Error {
+        match v {
+            1 => Ok(ProtocolVersion::V1),
+            2 => Ok(ProtocolVersion::V2),
+            3 => Ok(ProtocolVersion::V3),
+            _ => Err(E::custom("Unknown protocol version!"))
+        }
+    }
+}
 
 /// Enum listing the protocol versions that can be used when
 /// establishing a websocket connection to Exasol.
@@ -45,6 +67,12 @@ impl Serialize for ProtocolVersion {
             Self::V2 => serializer.serialize_u8(2u8),
             Self::V3 => serializer.serialize_u8(3u8),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for ProtocolVersion {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, dyn serde::de::Error> where D: Deserializer<'de> {
+        deserializer.deserialize_u8(ProtocolVersionVisitor)
     }
 }
 
@@ -95,9 +123,8 @@ pub struct ConOpts {
 
 impl Default for ConOpts {
     fn default() -> Self {
-        let crate_version = env::var("CARGO_PKG_VERSION")
-            .ok()
-            .map_or("UNKNOWN".to_owned(), |x| x);
+        let crate_version = env::var("CARGO_PKG_VERSION").
+            unwrap_or("UNKNOWN".to_owned());
 
         Self {
             dsn: "".to_owned(),

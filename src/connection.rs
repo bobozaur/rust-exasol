@@ -231,7 +231,7 @@ impl Connection {
 /// They need to own it so that they can use it to further fetch data when iterated.
 #[doc(hidden)]
 pub(crate) struct ConnectionImpl {
-    pub(crate) attr: HashMap<String, Value>,
+    attr: HashMap<String, Value>,
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
 }
 
@@ -388,8 +388,11 @@ impl ConnectionImpl {
     pub(crate) fn do_request(&mut self, payload: Value) -> Result<Option<Value>> {
         self.send(payload)
             .and_then(|_| self.recv())
+            .and_then(|data| {println!("{}", &data); Ok(data)})
             .and_then(|data| self.validate(data))
     }
+
+    // pub(crate) fn
 
     /// Attempts to create a websocket for the given URL
     fn create_websocket(url: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>> {

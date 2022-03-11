@@ -22,29 +22,29 @@ mod tests {
 
         let result = exa_con.execute("SELECT 1").unwrap();
 
-        let result = exa_con
-            .execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'")
-            .unwrap();
-
-        let result = exa_con
-            .execute("SELECT * FROM DIM_SIMPLE_DATE WHERE CALENDARYEAR = 2022;")
-            .unwrap();
-
-        if let QueryResult::ResultSet(r) = result {
-            let x = r.take(50).collect::<Result<Vec<Row>>>();
-            if let Ok(v) = x {
-                for row in v.iter() {}
-            }
-        }
-
-        let result = exa_con
-            .execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")
-            .unwrap();
-
-        let results = exa_con.execute_batch(vec!["SELECT 3", "SELECT 4"]).unwrap();
-
-        let results = exa_con
-            .execute_batch(vec!["SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2"])
-            .unwrap();
+        // let result = exa_con
+        //     .execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'")
+        //     .unwrap();
+        //
+        // let result = exa_con
+        //     .execute("SELECT * FROM DIM_SIMPLE_DATE WHERE CALENDARYEAR = 2022;")
+        //     .unwrap();
+        //
+        // if let QueryResult::ResultSet(r) = result {
+        //     let x = r.take(50).collect::<Result<Vec<Row>>>();
+        //     if let Ok(v) = x {
+        //         for row in v.iter() {}
+        //     }
+        // }
+        //
+        // let result = exa_con
+        //     .execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")
+        //     .unwrap();
+        //
+        // let results = exa_con.execute_batch(vec!["SELECT 3", "SELECT 4"]).unwrap();
+        //
+        // let results = exa_con
+        //     .execute_batch(vec!["SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2"])
+        //     .unwrap();
     }
 }
