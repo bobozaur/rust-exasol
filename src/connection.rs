@@ -5,15 +5,14 @@ use std::net::TcpStream;
 use std::rc::Rc;
 
 use rsa::{pkcs1::FromRsaPublicKey, RsaPublicKey};
-use serde::Deserialize;
 use serde_json::{json, Value};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, Error, RequestError, Result};
-use crate::query_result::{QueryResult, ResultSet};
-use crate::response::{Attributes, ExaError, Response, ResponseData, Results};
+use crate::query_result::QueryResult;
+use crate::response::{Response, ResponseData};
 
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
@@ -318,7 +317,7 @@ impl ConnectionImpl {
     /// Sends the setAttributes request
     /// And calls get_attributes for consistency
     pub(crate) fn set_con_attr(&mut self, attrs: Value) -> Result<()> {
-        let mut payload = json!({"command": "setAttributes", "attributes": attrs});
+        let payload = json!({"command": "setAttributes", "attributes": attrs});
         self.do_request(payload)?;
 
         self.get_con_attr()?;

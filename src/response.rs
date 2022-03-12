@@ -2,15 +2,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
-use std::vec::IntoIter;
 
 use crate::con_opts::ProtocolVersion;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::connection::ConnectionImpl;
-use crate::error::{RequestError, Result};
-use crate::query_result::{QueryResult, ResultSet};
+use crate::query_result::{QueryResult};
 
 pub type Row = Vec<Value>;
 
@@ -105,6 +103,7 @@ pub(crate) struct Attributes {
 
 /// Struct representing database information returned
 /// after establishing a connection.
+#[allow(unused)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LoginInfo {
@@ -115,6 +114,7 @@ pub(crate) struct LoginInfo {
 
 /// Struct representing public key information
 /// returned as part of the login process.
+#[allow(unused)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PublicKey {

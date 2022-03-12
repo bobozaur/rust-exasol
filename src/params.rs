@@ -47,7 +47,14 @@ where
     }
 
     let map = params.into_params_map();
-    let dummy = "";
+    let dummy = ""; // dummy placeholder for replace on missing map keys
+
+    // Due to the fixed type of the RE.replace_all method
+    // we have to use a placeholder result where we'll store
+    // the last error that comes up from a missing key, if any.
+    //
+    // We'll also use the dummy as replace value in that case
+    // as we need to return something and we'll error out anyway.
     let mut result = Ok(dummy.to_owned());
     let q = RE
         .replace_all(query, |cap: &Captures| match map.get(&cap[2]) {
@@ -59,6 +66,7 @@ where
         })
         .to_string();
 
+    // If all went well, return the actual query instead of the dummy value.
     result.and(Ok(q))
 }
 

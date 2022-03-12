@@ -1,8 +1,6 @@
 use crate::response::{Attributes, ExaError, Response, ResponseData};
 use rsa;
-use serde::{Deserialize, Serialize};
 use serde_json;
-use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
 use std::num::ParseIntError;
 use tungstenite;

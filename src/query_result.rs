@@ -2,7 +2,7 @@ use crate::connection::ConnectionImpl;
 use crate::error::{RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResponseData, ResultSetDe, Row};
 use serde_json::{json, Value};
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 use std::vec::IntoIter;
