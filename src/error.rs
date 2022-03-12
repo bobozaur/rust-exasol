@@ -1,3 +1,4 @@
+use crate::response::{Attributes, ExaError, Response, ResponseData};
 use rsa;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -9,6 +10,18 @@ use url;
 
 /// Result implementation to return an exasol::error::Error;
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<Response> for Result<(Option<ResponseData>, Option<Attributes>)> {
+    fn from(resp: Response) -> Self {
+        match resp {
+            Response::Ok {
+                response_data: data,
+                attributes: attr,
+            } => Ok((data, attr)),
+            Response::Error { exception: e } => Err(e.into())
+        }
+    }
+}
 
 /// Error type for Exasol
 #[derive(Debug)]
@@ -151,11 +164,3 @@ impl Display for ConnectionError {
         }
     }
 }
-
-impl Display for ExaError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", json!(self))
-    }
-}
-
-impl std::error::Error for ExaError {}

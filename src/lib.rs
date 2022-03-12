@@ -121,9 +121,10 @@ pub mod connection;
 pub mod error;
 pub mod params;
 pub mod query_result;
-mod response;
+pub mod response;
 
 pub use crate::con_opts::ConOpts;
 pub use crate::connection::{connect, Connection};
 pub use crate::params::{bind, ParameterMap, SQLParameter};
-pub use crate::query_result::{Column, QueryResult, ResultSet, Row};
+pub use crate::response::{Column, DataType, Row};
+pub use crate::query_result::{QueryResult, ResultSet};
