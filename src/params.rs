@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use lazy_static::lazy_static;
-use regex::Regex;
+use regex::{Captures, Regex};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
 
@@ -29,11 +29,11 @@ use std::collections::{BTreeMap, HashMap};
 /// use exasol::bind;
 ///
 /// let params = HashMap::from([
-///     ("COL1".to_owned(), "VALUE1"),
+///     ("COL".to_owned(), "VALUE1"),
 ///     ("COL2".to_owned(), "VALUE2")
 /// ]);
 ///
-/// let query = "INSERT INTO MY_TABLE VALUES(:COL1, :COL2);";
+/// let query = "INSERT INTO MY_TABLE VALUES(:COL, :COL2);";
 /// let new_query = bind(query, params).unwrap();
 ///
 /// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE1', 'VALUE2');", new_query);
@@ -43,21 +43,23 @@ where
     T: ParameterMap,
 {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r":(\w+)").unwrap();
+        static ref RE: Regex = Regex::new(r"[:\w\\]:\w+|:\w+:|(:(\w+))").unwrap();
     }
 
     let map = params.into_params_map();
-    let mut final_query = query.to_owned();
+    let dummy = "";
+    let mut result = Ok(dummy.to_owned());
+    let q = RE
+        .replace_all(query, |cap: &Captures| match map.get(&cap[2]) {
+            Some(k) => k,
+            None => {
+                result = Err(Error::BindError(format!("{} not found in map!", &cap[1])));
+                dummy
+            }
+        })
+        .to_string();
 
-    for cap in RE.captures_iter(query) {
-        let sub = map
-            .get(&cap[1])
-            .ok_or(Error::BindError(format!("{} not found in map!", &cap[1])))?;
-
-        final_query = final_query.replace(&cap[0], sub);
-    }
-
-    Ok(final_query)
+    result.and(Ok(q))
 }
 
 #[test]
