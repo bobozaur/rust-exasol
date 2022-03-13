@@ -14,6 +14,12 @@ use crate::error::{ConnectionError, Error, RequestError, Result};
 use crate::query_result::QueryResult;
 use crate::response::{Response, ResponseData};
 
+#[cfg(not(any(feature = "native-tls", feature = "rustls")))]
+static WS_STR: &str = "ws";
+#[cfg(any(feature = "native-tls", feature = "rustls"))]
+static WS_STR: &str = "wss";
+
+
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
 /// ```
@@ -284,7 +290,7 @@ impl ConnectionImpl {
             try_count -= 1;
 
             if let Some(addr) = addr_iter.next() {
-                let url = format!("ws://{}", addr);
+                let url = format!("{}://{}", WS_STR, addr);
 
                 match Self::create_websocket(&url) {
                     Err(e) => {
