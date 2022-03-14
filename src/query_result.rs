@@ -1,6 +1,7 @@
 use crate::connection::ConnectionImpl;
 use crate::error::{RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResponseData, ResultSetDe, Row};
+use crate::constants::MISSING_DATA;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
@@ -171,7 +172,7 @@ impl ResultSet {
                 let resp = con.get_resp_data(payload)?;
                 let data = match resp {
                     ResponseData::FetchedData(d) => Ok(d),
-                    _ => Err(RequestError::InvalidResponse("Missing fetched data!".to_owned()).into())
+                    _ => Err(RequestError::InvalidResponse(MISSING_DATA).into())
                 };
 
                 data.and_then(|f| {

@@ -123,6 +123,7 @@ pub mod params;
 pub mod query_result;
 pub mod response;
 pub mod prepared;
+mod constants;
 
 pub use crate::con_opts::ConOpts;
 pub use crate::connection::{connect, Connection};

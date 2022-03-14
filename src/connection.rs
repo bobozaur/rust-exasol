@@ -10,15 +10,11 @@ use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
+use crate::constants::{NOT_PONG, NO_PUBLIC_KEY, NO_RESPONSE_DATA, NO_RESULT_SET, WS_STR};
 use crate::error::{ConnectionError, Error, RequestError, Result};
 use crate::prepared::PreparedStatement;
 use crate::query_result::QueryResult;
 use crate::response::{Response, ResponseData};
-
-#[cfg(not(any(feature = "native-tls", feature = "rustls")))]
-static WS_STR: &str = "ws";
-#[cfg(any(feature = "native-tls", feature = "rustls"))]
-static WS_STR: &str = "wss";
 
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
@@ -296,11 +292,15 @@ impl Debug for ConnectionImpl {
 impl ConnectionImpl {
     /// Attempts to create the websocket, authenticate in Exasol
     /// and read the connection attributes afterwards.
+    ///
+    /// We'll get the list of IP addresses resulted from parsing and resolving the DSN
+    /// Then loop through all of them (max once each) until a connection is established.
+    /// Login is attempted afterwards.
+    ///
+    /// If all options were exhausted and a connection could not be established
+    /// an error is returned.
     pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
-        // Get list of IP addresses after parsing and resolving DSN
         let addresses = opts.parse_dsn()?;
-
-        // Will loop through all of them until a connection is established
         let mut try_count = addresses.len();
         let mut addr_iter = addresses.into_iter();
 
@@ -309,20 +309,17 @@ impl ConnectionImpl {
 
             if let Some(addr) = addr_iter.next() {
                 let url = format!("{}://{}", WS_STR, addr);
+                let res = Self::create_websocket(&url);
 
-                match Self::create_websocket(&url) {
+                match res {
+                    Ok(ws) => break Ok(ws),
                     Err(e) => {
                         if try_count <= 0 {
                             break Err(e);
                         }
                     }
-                    Ok(ws) => {
-                        break Ok(ws);
-                    }
                 }
             } else {
-                // This is only reached if the address iterator is empty, hence the DSN is invalid
-                // as it could not be resolved to any IP
                 break Err(Error::ConnectionError(ConnectionError::InvalidDSN));
             }
         }?;
@@ -343,7 +340,6 @@ impl ConnectionImpl {
     pub(crate) fn set_con_attr(&mut self, attrs: Value) -> Result<()> {
         let payload = json!({"command": "setAttributes", "attributes": attrs});
         self.do_request(payload)?;
-
         self.get_con_attr()?;
         Ok(())
     }
@@ -356,14 +352,7 @@ impl ConnectionImpl {
         query: &str,
     ) -> Result<QueryResult> {
         let payload = json!({"command": "execute", "sqlText": query});
-        self.exec_with_results(con_impl, payload)
-            .and_then(|mut v: Vec<QueryResult>| {
-                if v.is_empty() {
-                    Err(RequestError::InvalidResponse("No result set found".to_owned()).into())
-                } else {
-                    Ok(v.swap_remove(0))
-                }
-            })
+        self.exec_and_get_first(con_impl, payload)
     }
 
     /// Sends the payload to Exasol to execute multiple queries
@@ -377,6 +366,18 @@ impl ConnectionImpl {
         self.exec_with_results(con_impl, payload)
     }
 
+    /// Sends a request for execution and returns the first [QueryResult] received.
+    pub(crate) fn exec_and_get_first(&mut self, con_impl: &Rc<RefCell<ConnectionImpl>>, payload: Value) -> Result<QueryResult> {
+        self.exec_with_results(con_impl, payload)
+            .and_then(|mut v: Vec<QueryResult>| {
+                if v.is_empty() {
+                    Err(RequestError::InvalidResponse(NO_RESULT_SET).into())
+                } else {
+                    Ok(v.swap_remove(0))
+                }
+            })
+    }
+
     /// Creates a prepared statement
     pub(crate) fn prepare(
         &mut self,
@@ -384,20 +385,17 @@ impl ConnectionImpl {
         query: &str,
     ) -> Result<PreparedStatement> {
         let payload = json!({"command": "createPreparedStatement", "sqlText": query});
-        self.get_resp_data(payload).map_or_else(
-            |e| match e {
-                Error::RequestError(RequestError::ExaError(err)) => Err(Error::QueryError(err)),
-                _ => Err(e),
-            },
-            |r| match r {
+        self.get_resp_data(payload)
+            .map_err(|e| match e {
+                Error::RequestError(RequestError::ExaError(err)) => Error::QueryError(err),
+                _ => e,
+            })
+            .and_then(|r| match r {
                 ResponseData::PreparedStatement(res) => {
                     Ok(PreparedStatement::from_de(res, con_impl))
                 }
-                _ => Err(
-                    RequestError::InvalidResponse("No response data received".to_owned()).into(),
-                ),
-            },
-        )
+                _ => Err(RequestError::InvalidResponse(NO_RESPONSE_DATA).into()),
+            })
     }
 
     /// Closes a result set
@@ -419,26 +417,22 @@ impl ConnectionImpl {
         self.ws.write_message(Message::Ping(vec![]))?;
         match self.ws.read_message()? {
             Message::Pong(_) => Ok(()),
-            _ => Err(RequestError::InvalidResponse(
-                "Received frame different from Pong".to_string(),
-            ))?,
+            _ => Err(RequestError::InvalidResponse(NOT_PONG))?,
         }
     }
 
     /// Returns response data from a request
     pub(crate) fn get_resp_data(&mut self, payload: Value) -> Result<ResponseData> {
         self.do_request(payload)?
-            .ok_or(RequestError::InvalidResponse("No response data received".to_owned()).into())
+            .ok_or(RequestError::InvalidResponse(NO_RESPONSE_DATA).into())
     }
 
     /// Sends a request and waits for its response
     pub(crate) fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
         let (data, attr) = Result::from(self.send(payload).and_then(|_| self.recv())?)?;
-
         if let Some(attributes) = attr {
             self.attr.extend(attributes.map)
         }
-
         Ok(data)
     }
 
@@ -466,18 +460,15 @@ impl ConnectionImpl {
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         payload: Value,
     ) -> Result<Vec<QueryResult>> {
-        self.get_resp_data(payload).map_or_else(
-            |e| match e {
-                Error::RequestError(RequestError::ExaError(err)) => Err(Error::QueryError(err)),
-                _ => Err(e),
-            },
-            |r| match r {
+        self.get_resp_data(payload)
+            .map_err(|e| match e {
+                Error::RequestError(RequestError::ExaError(err)) => Error::QueryError(err),
+                _ => e,
+            })
+            .and_then(|r| match r {
                 ResponseData::Results(res) => Ok(res.to_query_results(con_impl)),
-                _ => Err(
-                    RequestError::InvalidResponse("No response data received".to_owned()).into(),
-                ),
-            },
-        )
+                _ => Err(RequestError::InvalidResponse(NO_RESPONSE_DATA).into()),
+            })
     }
 
     /// Gets connection attributes from Exasol
@@ -515,9 +506,7 @@ impl ConnectionImpl {
                 ResponseData::PublicKey(p) => Some(p.into_string_key()),
                 _ => None,
             })
-            .ok_or(RequestError::InvalidResponse(
-                "Public key not received".to_owned(),
-            ))?;
+            .ok_or(RequestError::InvalidResponse(NO_PUBLIC_KEY))?;
 
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)?)
     }
@@ -527,18 +516,18 @@ impl ConnectionImpl {
     fn login(&mut self, opts: ConOpts) -> Result<()> {
         // Retain the result set fetch size in bytes
         self.set_attr("fetch_size".to_owned(), json!(opts.fetch_size));
+
         // Encrypt password using server's public key
         let key = self.get_public_key(&opts.protocol_version)?;
         let payload = opts.to_value(key)?;
 
-        self.do_request(payload).map_or_else(
-            |e| match e {
-                Error::RequestError(RequestError::ExaError(err)) => {
-                    Err(ConnectionError::AuthError(err).into())
-                }
-                _ => Err(e),
-            },
-            |_| Ok(()),
-        )
+        self.do_request(payload).map_err(|e| match e {
+            Error::RequestError(RequestError::ExaError(err)) => {
+                ConnectionError::AuthError(err).into()
+            }
+            _ => e,
+        })?;
+
+        Ok(())
     }
 }

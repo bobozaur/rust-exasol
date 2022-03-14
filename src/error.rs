@@ -16,7 +16,7 @@ impl From<Response> for Result<(Option<ResponseData>, Option<Attributes>)> {
                 response_data: data,
                 attributes: attr,
             } => Ok((data, attr)),
-            Response::Error { exception: e } => Err(e.into())
+            Response::Error { exception: e } => Err(e.into()),
         }
     }
 }
@@ -113,7 +113,7 @@ impl From<tungstenite::error::Error> for Error {
 #[derive(Debug)]
 pub enum RequestError {
     MissingHandleError,
-    InvalidResponse(String),
+    InvalidResponse(&'static str),
     ResponseParseError(serde_json::error::Error),
     ExaError(ExaError),
 }

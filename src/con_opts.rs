@@ -164,7 +164,7 @@ impl ConOpts {
         Self::default()
     }
 
-    /// Parses the provided dsn to expand ranges and resolve IP addresses.
+    /// Parses the provided DSN to expand ranges and resolve IP addresses.
     /// Connection to all nodes will then be attempted in a random order
     /// until one is successful or all failed.
     pub(crate) fn parse_dsn(&self) -> Result<Vec<String>> {

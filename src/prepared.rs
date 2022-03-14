@@ -1,4 +1,5 @@
 use crate::connection::ConnectionImpl;
+use crate::constants::NO_RESPONSE_DATA;
 use crate::error::{RequestError, Result};
 use crate::response::{ParameterData, PreparedStatementDe};
 use crate::{QueryResult, Row};
@@ -27,13 +28,13 @@ impl PreparedStatement {
     }
 
     pub fn execute(&self, data: Vec<Row>) -> Result<QueryResult> {
-        let no_num_columns = 0u8;
-        let no_columns_vec = vec![];
+        let dummy_num_cols = 0u8;
+        let dummy_cols_vec = vec![];
 
         let (num_columns, columns) = self
             .parameter_data
             .as_ref()
-            .map_or((&no_num_columns, &no_columns_vec), |p| {
+            .map_or((&dummy_num_cols, &dummy_cols_vec), |p| {
                 (&p.num_columns, &p.columns)
             });
 
@@ -48,14 +49,7 @@ impl PreparedStatement {
 
         self.connection
             .borrow_mut()
-            .exec_with_results(&self.connection, payload)
-            .and_then(|mut v| {
-                if v.is_empty() {
-                    Err(RequestError::InvalidResponse("No result set found".to_owned()).into())
-                } else {
-                    Ok(v.swap_remove(0))
-                }
-            })
+            .exec_and_get_first(&self.connection, payload)
     }
 
     fn close(&mut self) -> Result<()> {
