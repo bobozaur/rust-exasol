@@ -38,11 +38,12 @@ pub(crate) enum Response {
 /// with no specific identifier between them
 /// we have to use untagged deserialization.
 ///
-/// We'll set the most common one, the results,
-/// as the first one, to speed up most deserializations.
+/// As a result, the order of the enum variants matters,
+/// as deserialization has to be non-overlapping yet exhaustive.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum ResponseData {
+    PreparedStatement(PreparedStatementDe),
     Results(Results),
     FetchedData(FetchedData),
     PublicKey(PublicKey),
@@ -108,7 +109,7 @@ fn deserialize_results() {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Results {
-    num_results: u16,
+    num_results: u8,
     results: Vec<QueryResultDe>,
 }
 
@@ -123,6 +124,79 @@ impl Results {
             .map(|q| QueryResult::from_de(q, con_rc))
             .collect()
     }
+}
+
+#[test]
+#[allow(unused)]
+fn deser_fetched_data() {
+    let json_data = json!(
+        {
+            "numRows": 30,
+            "data": [[1, 2, 3], [4, 5, 6]]
+        }
+    );
+
+    let de: FetchedData = serde_json::from_value(json_data).unwrap();
+}
+
+/// Struct used for deserialization of fetched data
+/// from getting a result set given a statement handle
+#[derive(Debug, Deserialize)]
+pub(crate) struct FetchedData {
+    #[serde(rename = "numRows")]
+    pub(crate) chunk_rows_num: usize,
+    #[serde(default)]
+    pub(crate) data: Vec<Row>,
+}
+
+#[test]
+#[allow(unused)]
+fn deserialize_prepared() {
+    let result = json!({
+        "statementHandle": 1,
+       "numResults":1,
+       "results":[
+          {
+     "resultSet":{
+        "columns":[
+           {
+              "dataType":{
+                 "precision":1,
+                 "scale":0,
+                 "type":"DECIMAL"
+              },
+              "name":"1"
+           }
+        ],
+        "data":[
+           [
+              1
+           ]
+        ],
+        "numColumns":1,
+        "numRows":1,
+        "numRowsInMessage":1
+     },
+     "resultType":"resultSet"
+          }
+       ]
+    });
+    let de: PreparedStatementDe = serde_json::from_value(result).unwrap();
+}
+
+/// Struct representing a prepared statement
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreparedStatementDe {
+    pub(crate) statement_handle: usize,
+    pub(crate) parameter_data: Option<ParameterData>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParameterData {
+    pub num_columns: u8,
+    pub columns: Vec<Column>
 }
 
 /// Struct representing attributes returned from Exasol.
@@ -248,15 +322,14 @@ fn deser_result_set() {
 
 /// Struct used for deserialization of a ResultSet
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ResultSetDe {
-    #[serde(rename = "numColumns")]
-    pub(crate) num_columns: u8,
     #[serde(rename = "numRows")]
     pub(crate) total_rows_num: u32,
     #[serde(rename = "numRowsInMessage")]
     pub(crate) chunk_rows_num: usize,
-    #[serde(rename = "resultSetHandle")]
-    pub(crate) statement_handle: Option<u16>,
+    pub(crate) num_columns: u8,
+    pub(crate) result_set_handle: Option<u16>,
     pub(crate) columns: Vec<Column>,
     #[serde(default)]
     pub(crate) data: Vec<Row>,
@@ -299,11 +372,11 @@ fn deser_columns() {
 
 /// Struct containing the name and datatype (as seen in Exasol) of a given column.
 #[allow(unused)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Column {
     pub name: String,
     #[serde(rename = "dataType")]
-    pub datatype: Value,
+    pub datatype: DataType,
 }
 
 impl Display for Column {
@@ -314,7 +387,7 @@ impl Display for Column {
 
 /// Struct representing a datatype for a column in a result set.
 #[allow(unused)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataType {
     #[serde(rename = "type")]
@@ -328,25 +401,8 @@ pub struct DataType {
     srid: Option<usize>,
 }
 
-#[test]
-#[allow(unused)]
-fn deser_fetched_data() {
-    let json_data = json!(
-        {
-            "numRows": 30,
-            "data": [[1, 2, 3], [4, 5, 6]]
-        }
-    );
-
-    let de: FetchedData = serde_json::from_value(json_data).unwrap();
-}
-
-/// Struct used for deserialization of fetched data
-/// from getting a result set given a statement handle
-#[derive(Debug, Deserialize)]
-pub(crate) struct FetchedData {
-    #[serde(rename = "numRows")]
-    pub(crate) chunk_rows_num: usize,
-    #[serde(default)]
-    pub(crate) data: Vec<Row>,
+impl Display for DataType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.type_name)
+    }
 }

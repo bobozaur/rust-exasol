@@ -74,7 +74,7 @@ pub struct ResultSet {
     total_rows_pos: u32,
     chunk_rows_num: usize,
     chunk_rows_pos: usize,
-    statement_handle: Option<u16>,
+    result_set_handle: Option<u16>,
     columns: Vec<Column>,
     iter: Vec<IntoIter<Value>>,
     connection: Rc<RefCell<ConnectionImpl>>,
@@ -86,28 +86,28 @@ impl Debug for ResultSet {
         write!(
             f,
             "Closed: {}\nHandle: {:?}\nColumns: {:?}\nRows: {}",
-            self.is_closed, self.statement_handle, self.columns, self.total_rows_num
+            self.is_closed, self.result_set_handle, self.columns, self.total_rows_num
         )
     }
 }
 
 impl ResultSet {
-    /// Returns a reference to a [Vec<Column>] of the result set columns
+    /// Returns a reference to a [Vec<Column>] of the result set columns.
     pub fn columns(&self) -> &Vec<Column> {
         &self.columns
     }
 
-    /// Returns the number of columns in the result set
+    /// Returns the number of columns in the result set.
     pub fn num_columns(&self) -> &u8 {
         &self.num_columns
     }
 
-    /// Returns the number of rows in the result set
+    /// Returns the number of rows in the result set.
     pub fn num_rows(&self) -> &u32 {
         &self.total_rows_num
     }
 
-    /// Method that generates the [ResultSet] struct based on [ResultSetDe]
+    /// Method that generates the [ResultSet] struct based on [ResultSetDe].
     pub(crate) fn from_de(result_set: ResultSetDe, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Self {
         Self {
             num_columns: result_set.num_columns,
@@ -115,7 +115,7 @@ impl ResultSet {
             total_rows_pos: 0,
             chunk_rows_num: result_set.chunk_rows_num,
             chunk_rows_pos: 0,
-            statement_handle: result_set.statement_handle,
+            result_set_handle: result_set.result_set_handle,
             columns: result_set.columns,
             iter: result_set.data.into_iter().map(|v| v.into_iter()).collect(),
             connection: Rc::clone(con_rc),
@@ -138,7 +138,7 @@ impl ResultSet {
     /// This method gets called when a [ResultSet] is fully iterated over
     /// but also when the [ResultSet] is dropped.
     fn close(&mut self) -> Result<()> {
-        self.statement_handle.map_or(Ok(()), |h| {
+        self.result_set_handle.map_or(Ok(()), |h| {
             if !self.is_closed {
                 self.is_closed = true;
                 (*self.connection).borrow_mut().close_result_set(h)
@@ -151,7 +151,7 @@ impl ResultSet {
     /// Gets the next chunk of the result set from Exasol
     fn fetch_chunk(&mut self) -> Result<()> {
         // Check the statement handle
-        self.statement_handle
+        self.result_set_handle
             .ok_or(RequestError::MissingHandleError.into())
             .and_then(|h| {
                 // Dereference connection

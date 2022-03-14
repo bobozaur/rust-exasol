@@ -8,7 +8,7 @@ mod tests {
     use serde_json::json;
 
     use exasol::error::Result;
-    use exasol::{connect, QueryResult, Row};
+    use exasol::{connect, PreparedStatement, QueryResult, Row};
 
     #[test]
     #[allow(unused)]
@@ -20,31 +20,45 @@ mod tests {
 
         let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 
-        let result = exa_con.execute("SELECT 1").unwrap();
-
-        let result = exa_con
-            .execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'")
+        let prepared = exa_con
+            .prepare("Select 1 FROM (select 1) TMP WHERE 1 = ?;")
             .unwrap();
+        let result = prepared.execute(vec![vec![json!(1)]]).unwrap();
 
-        let result = exa_con
-            .execute("SELECT * FROM DIM_SIMPLE_DATE WHERE CALENDARYEAR = 2022;")
-            .unwrap();
+        println!("{:?}", result);
 
         if let QueryResult::ResultSet(r) = result {
             let x = r.take(50).collect::<Result<Vec<Row>>>();
             if let Ok(v) = x {
-                for row in v.iter() {}
+                for row in v.iter() {println!("{:?}", row)}
             }
         }
 
-        let result = exa_con
-            .execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")
-            .unwrap();
-
-        let results = exa_con.execute_batch(vec!["SELECT 3", "SELECT 4"]).unwrap();
-
-        let results = exa_con
-            .execute_batch(vec!["SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2"])
-            .unwrap();
+        // let result = exa_con.execute("SELECT 1").unwrap();
+        //
+        // let result = exa_con
+        //     .execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'")
+        //     .unwrap();
+        //
+        // let result = exa_con
+        //     .execute("SELECT * FROM DIM_SIMPLE_DATE WHERE CALENDARYEAR = 2022;")
+        //     .unwrap();
+        //
+        // if let QueryResult::ResultSet(r) = result {
+        //     let x = r.take(50).collect::<Result<Vec<Row>>>();
+        //     if let Ok(v) = x {
+        //         for row in v.iter() {}
+        //     }
+        // }
+        //
+        // let result = exa_con
+        //     .execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")
+        //     .unwrap();
+        //
+        // let results = exa_con.execute_batch(vec!["SELECT 3".to_owned(), "SELECT 4".to_owned()]).unwrap();
+        //
+        // let results = exa_con
+        //     .execute_batch(vec!["SELECT 3".to_owned(), "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2".to_owned()])
+        //     .unwrap();
     }
 }

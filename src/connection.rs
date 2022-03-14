@@ -11,6 +11,7 @@ use url::Url;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, Error, RequestError, Result};
+use crate::prepared::PreparedStatement;
 use crate::query_result::QueryResult;
 use crate::response::{Response, ResponseData};
 
@@ -18,7 +19,6 @@ use crate::response::{Response, ResponseData};
 static WS_STR: &str = "ws";
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
 static WS_STR: &str = "wss";
-
 
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
@@ -120,11 +120,29 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3", "SELECT 4")).unwrap();
-    /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")).unwrap();
+    /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3".to_owned(), "SELECT 4".to_owned())).unwrap();
+    /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3".to_owned(), "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2".to_owned())).unwrap();
     /// ```
-    pub fn execute_batch(&mut self, queries: Vec<&str>) -> Result<Vec<QueryResult>> {
+    pub fn execute_batch(&mut self, queries: Vec<String>) -> Result<Vec<QueryResult>> {
         (*self.con).borrow_mut().execute_batch(&self.con, queries)
+    }
+
+    /// Creates a prepared statement of type [PreparedStatement].
+    ///
+    /// ```
+    /// # use exasol::{connect, Row, QueryResult, PreparedStatement};
+    /// # use exasol::error::Result;
+    /// # use std::env;
+    ///
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let results: PreparedStatement = exa_con.prepare("SELECT 1").unwrap();
+    /// ```
+    pub fn prepare(&mut self, query: &str) -> Result<PreparedStatement> {
+        (*self.con).borrow_mut().prepare(&self.con, query)
     }
 
     /// Ping the server and wait for Pong frame
@@ -338,7 +356,7 @@ impl ConnectionImpl {
         query: &str,
     ) -> Result<QueryResult> {
         let payload = json!({"command": "execute", "sqlText": query});
-        self._execute(con_impl, payload)
+        self.exec_with_results(con_impl, payload)
             .and_then(|mut v: Vec<QueryResult>| {
                 if v.is_empty() {
                     Err(RequestError::InvalidResponse("No result set found".to_owned()).into())
@@ -353,15 +371,45 @@ impl ConnectionImpl {
     pub(crate) fn execute_batch(
         &mut self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
-        queries: Vec<&str>,
+        queries: Vec<String>,
     ) -> Result<Vec<QueryResult>> {
         let payload = json!({"command": "executeBatch", "sqlTexts": queries});
-        self._execute(con_impl, payload)
+        self.exec_with_results(con_impl, payload)
+    }
+
+    /// Creates a prepared statement
+    pub(crate) fn prepare(
+        &mut self,
+        con_impl: &Rc<RefCell<ConnectionImpl>>,
+        query: &str,
+    ) -> Result<PreparedStatement> {
+        let payload = json!({"command": "createPreparedStatement", "sqlText": query});
+        self.get_resp_data(payload).map_or_else(
+            |e| match e {
+                Error::RequestError(RequestError::ExaError(err)) => Err(Error::QueryError(err)),
+                _ => Err(e),
+            },
+            |r| match r {
+                ResponseData::PreparedStatement(res) => {
+                    Ok(PreparedStatement::from_de(res, con_impl))
+                }
+                _ => Err(
+                    RequestError::InvalidResponse("No response data received".to_owned()).into(),
+                ),
+            },
+        )
     }
 
     /// Closes a result set
     pub(crate) fn close_result_set(&mut self, handle: u16) -> Result<()> {
         let payload = json!({"command": "closeResultSet", "resultSetHandles": [handle]});
+        self.do_request(payload)?;
+        Ok(())
+    }
+
+    /// Closes a prepared statement
+    pub(crate) fn close_prepared_stmt(&mut self, handle: usize) -> Result<()> {
+        let payload = json!({"command": "closePreparedStatement", "statementHandle": handle});
         self.do_request(payload)?;
         Ok(())
     }
@@ -412,8 +460,8 @@ impl ConnectionImpl {
 
     /// Gets the database results as [crate::query_result::Results]
     /// (that's what they deserialize into) and consumes them
-    /// to return a usable vector of QueryResult enums.
-    fn _execute(
+    /// to return a usable vector of [QueryResult] enums.
+    pub(crate) fn exec_with_results(
         &mut self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         payload: Value,
