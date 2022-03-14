@@ -20,12 +20,32 @@ mod tests {
 
         let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 
-        let prepared = exa_con
-            .prepare("Select 1 FROM (select 1) TMP WHERE 1 = ?;")
-            .unwrap();
-        let result = prepared.execute(vec![vec![json!(1)]]).unwrap();
+        // let prepared = exa_con
+        //     .prepare("Select 1 FROM (select 1) TMP WHERE 1 = ?;")
+        //     .unwrap();
+        // let result = prepared.execute(vec![vec![json!(1)]]).unwrap();
+        //
+        // println!("{:?}", result);
+        //
+        // if let QueryResult::ResultSet(r) = result {
+        //     let x = r.take(50).collect::<Result<Vec<Row>>>();
+        //     if let Ok(v) = x {
+        //         for row in v.iter() {println!("{:?}", row)}
+        //     }
+        // }
 
-        println!("{:?}", result);
+        // let result = exa_con.execute("SELECT 1").unwrap();
+        //
+        // let result = exa_con
+        //     .execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'")
+        //     .unwrap();
+        //
+        use std::time::Instant;
+        let now = Instant::now();
+
+        let result = exa_con
+            .execute("SELECT * FROM DIM_SIMPLE_DATE WHERE CALENDARYEAR = 2021;")
+            .unwrap();
 
         if let QueryResult::ResultSet(r) = result {
             let x = r.take(50).collect::<Result<Vec<Row>>>();
@@ -34,22 +54,8 @@ mod tests {
             }
         }
 
-        // let result = exa_con.execute("SELECT 1").unwrap();
-        //
-        // let result = exa_con
-        //     .execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'")
-        //     .unwrap();
-        //
-        // let result = exa_con
-        //     .execute("SELECT * FROM DIM_SIMPLE_DATE WHERE CALENDARYEAR = 2022;")
-        //     .unwrap();
-        //
-        // if let QueryResult::ResultSet(r) = result {
-        //     let x = r.take(50).collect::<Result<Vec<Row>>>();
-        //     if let Ok(v) = x {
-        //         for row in v.iter() {}
-        //     }
-        // }
+        println!("{}", now.elapsed().as_millis());
+
         //
         // let result = exa_con
         //     .execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")

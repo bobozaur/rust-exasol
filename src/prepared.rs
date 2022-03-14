@@ -1,6 +1,5 @@
 use crate::connection::ConnectionImpl;
-use crate::constants::NO_RESPONSE_DATA;
-use crate::error::{RequestError, Result};
+use crate::error::Result;
 use crate::response::{ParameterData, PreparedStatementDe};
 use crate::{QueryResult, Row};
 use serde_json::json;

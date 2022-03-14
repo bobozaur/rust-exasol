@@ -4,11 +4,14 @@ use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 use crate::con_opts::ProtocolVersion;
+use crate::constants::{MISSING_DATA, NO_RESPONSE_DATA};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::connection::ConnectionImpl;
-use crate::query_result::{QueryResult};
+use crate::query_result::QueryResult;
+use crate::PreparedStatement;
 
 pub type Row = Vec<Value>;
 
@@ -48,7 +51,48 @@ pub(crate) enum ResponseData {
     FetchedData(FetchedData),
     PublicKey(PublicKey),
     LoginInfo(LoginInfo),
-    Attributes(Attributes)
+    Attributes(Attributes),
+}
+
+impl ResponseData {
+    /// Attempts to convert this struct to a [Vec<QueryResult>].
+    pub(crate) fn try_to_query_results(
+        self,
+        con_impl: &Rc<RefCell<ConnectionImpl>>,
+    ) -> Result<Vec<QueryResult>> {
+        match self {
+            Self::Results(res) => Ok(res.to_query_results(con_impl)),
+            _ => Err(NO_RESPONSE_DATA.into()),
+        }
+    }
+
+    /// Attempts to convert this struct to a [PreparedStatement].
+    pub(crate) fn try_to_prepared_stmt(
+        self,
+        con_impl: &Rc<RefCell<ConnectionImpl>>,
+    ) -> Result<PreparedStatement> {
+        match self {
+            Self::PreparedStatement(res) => Ok(PreparedStatement::from_de(res, con_impl)),
+            _ => Err(NO_RESPONSE_DATA.into()),
+        }
+    }
+
+    /// Attempts to convert this struct to a [FetchedData].
+    pub(crate) fn try_to_fetched_data(self) -> Result<FetchedData> {
+        match self {
+            Self::FetchedData(d) => Ok(d),
+            _ => Err(MISSING_DATA.into()),
+        }
+    }
+
+    /// Returns [Option<String>] with `Some(Key)` if conversion works
+    /// or `None` if it does not.
+    pub(crate) fn to_public_key(self) -> Option<String> {
+        match self {
+            Self::PublicKey(p) => Some(p.into_string_key()),
+            _ => None,
+        }
+    }
 }
 
 /// Generic struct containing the response fields
@@ -196,7 +240,7 @@ pub(crate) struct PreparedStatementDe {
 #[serde(rename_all = "camelCase")]
 pub struct ParameterData {
     pub num_columns: u8,
-    pub columns: Vec<Column>
+    pub columns: Vec<Column>,
 }
 
 /// Struct representing attributes returned from Exasol.
@@ -284,7 +328,7 @@ fn deser_query_result2() {
 /// Represents the result of one query.
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
-#[serde(tag = "resultType", rename_all="camelCase")]
+#[serde(tag = "resultType", rename_all = "camelCase")]
 pub(crate) enum QueryResultDe {
     #[serde(rename_all = "camelCase")]
     ResultSet { result_set: ResultSetDe },
@@ -368,7 +412,6 @@ fn deser_columns() {
 
     let de: Vec<Column> = serde_json::from_value(json_data).unwrap();
 }
-
 
 /// Struct containing the name and datatype (as seen in Exasol) of a given column.
 #[allow(unused)]

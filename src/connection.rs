@@ -367,11 +367,15 @@ impl ConnectionImpl {
     }
 
     /// Sends a request for execution and returns the first [QueryResult] received.
-    pub(crate) fn exec_and_get_first(&mut self, con_impl: &Rc<RefCell<ConnectionImpl>>, payload: Value) -> Result<QueryResult> {
+    pub(crate) fn exec_and_get_first(
+        &mut self,
+        con_impl: &Rc<RefCell<ConnectionImpl>>,
+        payload: Value,
+    ) -> Result<QueryResult> {
         self.exec_with_results(con_impl, payload)
             .and_then(|mut v: Vec<QueryResult>| {
                 if v.is_empty() {
-                    Err(RequestError::InvalidResponse(NO_RESULT_SET).into())
+                    Err(NO_RESULT_SET.into())
                 } else {
                     Ok(v.swap_remove(0))
                 }
@@ -386,16 +390,8 @@ impl ConnectionImpl {
     ) -> Result<PreparedStatement> {
         let payload = json!({"command": "createPreparedStatement", "sqlText": query});
         self.get_resp_data(payload)
-            .map_err(|e| match e {
-                Error::RequestError(RequestError::ExaError(err)) => Error::QueryError(err),
-                _ => e,
-            })
-            .and_then(|r| match r {
-                ResponseData::PreparedStatement(res) => {
-                    Ok(PreparedStatement::from_de(res, con_impl))
-                }
-                _ => Err(RequestError::InvalidResponse(NO_RESPONSE_DATA).into()),
-            })
+            .map_err(|e| e.conv_query_error())
+            .and_then(|r| r.try_to_prepared_stmt(con_impl))
     }
 
     /// Closes a result set
@@ -417,14 +413,13 @@ impl ConnectionImpl {
         self.ws.write_message(Message::Ping(vec![]))?;
         match self.ws.read_message()? {
             Message::Pong(_) => Ok(()),
-            _ => Err(RequestError::InvalidResponse(NOT_PONG))?,
+            _ => Err(NOT_PONG.into()),
         }
     }
 
     /// Returns response data from a request
     pub(crate) fn get_resp_data(&mut self, payload: Value) -> Result<ResponseData> {
-        self.do_request(payload)?
-            .ok_or(RequestError::InvalidResponse(NO_RESPONSE_DATA).into())
+        self.do_request(payload)?.ok_or(NO_RESPONSE_DATA.into())
     }
 
     /// Sends a request and waits for its response
@@ -446,10 +441,10 @@ impl ConnectionImpl {
 
     /// Attempts to create a websocket for the given URL
     fn create_websocket(url: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>> {
-        Ok(Url::parse(&url)
-            .map_err(|e| ConnectionError::DSNParseError(e))
-            .and_then(|u| tungstenite::connect(u).map_err(|e| ConnectionError::WebsocketError(e)))
-            .and_then(|(ws, _)| Ok(ws))?)
+        Url::parse(&url)
+            .map_err(From::from)
+            .and_then(|u| tungstenite::connect(u).map_err(From::from))
+            .and_then(|(ws, _)| Ok(ws))
     }
 
     /// Gets the database results as [crate::query_result::Results]
@@ -461,14 +456,8 @@ impl ConnectionImpl {
         payload: Value,
     ) -> Result<Vec<QueryResult>> {
         self.get_resp_data(payload)
-            .map_err(|e| match e {
-                Error::RequestError(RequestError::ExaError(err)) => Error::QueryError(err),
-                _ => e,
-            })
-            .and_then(|r| match r {
-                ResponseData::Results(res) => Ok(res.to_query_results(con_impl)),
-                _ => Err(RequestError::InvalidResponse(NO_RESPONSE_DATA).into()),
-            })
+            .map_err(|e| e.conv_query_error())
+            .and_then(|r| r.try_to_query_results(con_impl))
     }
 
     /// Gets connection attributes from Exasol
@@ -502,11 +491,8 @@ impl ConnectionImpl {
 
         let pem = self
             .do_request(payload)?
-            .and_then(|p| match p {
-                ResponseData::PublicKey(p) => Some(p.into_string_key()),
-                _ => None,
-            })
-            .ok_or(RequestError::InvalidResponse(NO_PUBLIC_KEY))?;
+            .and_then(|p| p.to_public_key())
+            .ok_or(NO_PUBLIC_KEY)?;
 
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)?)
     }

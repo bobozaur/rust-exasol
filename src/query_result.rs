@@ -1,7 +1,6 @@
 use crate::connection::ConnectionImpl;
 use crate::error::{RequestError, Result};
-use crate::response::{Column, QueryResultDe, ResponseData, ResultSetDe, Row};
-use crate::constants::MISSING_DATA;
+use crate::response::{Column, QueryResultDe, ResultSetDe, Row};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
@@ -169,18 +168,14 @@ impl ResultSet {
                     "numBytes": fetch_size,
                 });
 
-                let resp = con.get_resp_data(payload)?;
-                let data = match resp {
-                    ResponseData::FetchedData(d) => Ok(d),
-                    _ => Err(RequestError::InvalidResponse(MISSING_DATA).into())
-                };
-
-                data.and_then(|f| {
-                    self.chunk_rows_num = f.chunk_rows_num;
-                    self.chunk_rows_pos = 0;
-                    self.iter = f.data.into_iter().map(|v| v.into_iter()).collect();
-                    Ok(())
-                })
+                con.get_resp_data(payload)?
+                    .try_to_fetched_data()
+                    .and_then(|f| {
+                        self.chunk_rows_num = f.chunk_rows_num;
+                        self.chunk_rows_pos = 0;
+                        self.iter = f.data.into_iter().map(|v| v.into_iter()).collect();
+                        Ok(())
+                    })
             })
     }
 }

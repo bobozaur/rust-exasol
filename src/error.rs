@@ -30,6 +30,17 @@ pub enum Error {
     QueryError(ExaError),
 }
 
+impl Error {
+    /// Converts this [Error] variant to a QueryError if the variant matches.
+    /// Otherwise returns the initial error.
+    pub(crate) fn conv_query_error(self) -> Self {
+        match self {
+            Self::RequestError(RequestError::ExaError(err)) => Self::QueryError(err),
+            _ => self,
+        }
+    }
+}
+
 impl std::error::Error for Error {}
 
 impl Display for Error {
@@ -40,6 +51,12 @@ impl Display for Error {
             Self::RequestError(e) => write!(f, "{}", e),
             Self::QueryError(e) => write!(f, "{}", e),
         }
+    }
+}
+
+impl From<&'static str> for Error {
+    fn from(e: &'static str) -> Self {
+        Self::RequestError(RequestError::InvalidResponse(e))
     }
 }
 
