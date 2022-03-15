@@ -120,14 +120,12 @@ pub mod con_opts;
 pub mod connection;
 pub mod error;
 pub mod params;
-pub mod query_result;
+pub mod query;
 pub mod response;
-pub mod prepared;
 mod constants;
 
 pub use crate::con_opts::ConOpts;
 pub use crate::connection::{connect, Connection};
 pub use crate::params::{bind, ParameterMap, SQLParameter};
 pub use crate::response::{Column, DataType, Row};
-pub use crate::query_result::{QueryResult, ResultSet};
-pub use crate::prepared::PreparedStatement;
+pub use crate::query::{QueryResult, ResultSet, PreparedStatement};

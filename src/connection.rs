@@ -12,8 +12,7 @@ use url::Url;
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::constants::{NOT_PONG, NO_PUBLIC_KEY, NO_RESPONSE_DATA, NO_RESULT_SET, WS_STR};
 use crate::error::{ConnectionError, Error, RequestError, Result};
-use crate::prepared::PreparedStatement;
-use crate::query_result::QueryResult;
+use crate::query::{QueryResult, PreparedStatement};
 use crate::response::{Response, ResponseData};
 
 /// Convenience function to quickly connect using default options.
@@ -124,10 +123,11 @@ impl Connection {
     }
 
     /// Creates a prepared statement of type [PreparedStatement].
-    ///
+    /// The prepared statement can then be executed with the provided data.
     /// ```
     /// # use exasol::{connect, Row, QueryResult, PreparedStatement};
     /// # use exasol::error::Result;
+    /// # use serde_json::json;
     /// # use std::env;
     ///
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -135,7 +135,8 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let results: PreparedStatement = exa_con.prepare("SELECT 1").unwrap();
+    /// let prepared_stmt: PreparedStatement = exa_con.prepare("SELECT 1 FROM (SELECT 1) TMP WHERE 1 = ?").unwrap();
+    /// prepared_stmt.execute(vec![vec![json!(1)]]).unwrap();
     /// ```
     pub fn prepare(&mut self, query: &str) -> Result<PreparedStatement> {
         (*self.con).borrow_mut().prepare(&self.con, query)

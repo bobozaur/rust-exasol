@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::connection::ConnectionImpl;
-use crate::query_result::QueryResult;
+use crate::query::QueryResult;
 use crate::PreparedStatement;
 
 pub type Row = Vec<Value>;
