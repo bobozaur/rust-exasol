@@ -149,8 +149,9 @@ impl Connection {
     /// let prepared_stmt: PreparedStatement = exa_con.prepare("SELECT 1 FROM (SELECT 1) TMP WHERE 1 = ?").unwrap();
     /// prepared_stmt.execute(vec![vec![json!(1)]]).unwrap();
     /// ```
-    pub fn prepare(&mut self, query: &str) -> Result<PreparedStatement> {
-        (*self.con).borrow_mut().prepare(&self.con, query)
+    pub fn prepare<T>(&mut self, query: T) -> Result<PreparedStatement>
+    where T: Query {
+        (*self.con).borrow_mut().prepare(&self.con, query.to_query())
     }
 
     /// Ping the server and wait for Pong frame
