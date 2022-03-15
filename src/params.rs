@@ -4,7 +4,7 @@ use regex::{Captures, Regex};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
 
-/// Binds named parameters from a construct implementing [ParameterMap] to the given string.
+/// Binds named parameters from a construct implementing [BindParamMap] to the given string.
 /// Returns a Result containing the formatted string or an Error if any parameters are missing.
 ///
 /// ```
@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, HashMap};
 /// ```
 pub fn bind<T>(query: &str, params: T) -> Result<String>
 where
-    T: ParameterMap,
+    T: BindParamMap,
 {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"[:\w\\]:\w+|:\w+:|(:(\w+))").unwrap();
@@ -104,7 +104,7 @@ fn param_array_test() {
 /// Used for stringifying an array-like referenced object
 fn param_array<T, I>(a: I) -> String
 where
-    T: SQLParameter,
+    T: BindParam,
     I: IntoIterator<Item = T>,
 {
     param_iter(a, |val| val.to_sql_param())
@@ -133,7 +133,7 @@ fn param_map_test() {
 /// Used for stringifying a map-like referenced object
 fn param_map<T, I, U>(m: I) -> String
 where
-    T: SQLParameter,
+    T: BindParam,
     I: IntoIterator<Item = (U, T)>,
 {
     param_iter(m, |(_, val)| val.to_sql_param())
@@ -153,193 +153,193 @@ fn param_bool(b: bool) -> String {
     }
 }
 
-/// Used in default implementations of [ParameterMap] to provide a mechanism
+/// Used in default implementations of [BindParamMap] to provide a mechanism
 /// for generating a String as a SQL parameter out of a type.
 ///
 /// Can be implemented to other types for custom behaviour.
-pub trait SQLParameter {
+pub trait BindParam {
     fn to_sql_param(&self) -> String;
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("NULL", ().to_sql_param());
 /// ```
-impl SQLParameter for () {
+impl BindParam for () {
     fn to_sql_param(&self) -> String {
         "NULL".to_owned()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", true.to_sql_param());
 /// assert_eq!("0", false.to_sql_param());
 /// ```
-impl SQLParameter for bool {
+impl BindParam for bool {
     fn to_sql_param(&self) -> String {
         param_bool(*self)
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("'1'", "1".to_sql_param());
 /// ```
-impl SQLParameter for &str {
+impl BindParam for &str {
     fn to_sql_param(&self) -> String {
         param_str(self)
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("'1'", String::from("1").to_sql_param());
 /// ```
-impl SQLParameter for String {
+impl BindParam for String {
     fn to_sql_param(&self) -> String {
         param_str(&self)
     }
 }
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1usize.to_sql_param());
 /// ```
-impl SQLParameter for usize {
+impl BindParam for usize {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1u8.to_sql_param());
 /// ```
-impl SQLParameter for u8 {
+impl BindParam for u8 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1u16.to_sql_param());
 /// ```
-impl SQLParameter for u16 {
+impl BindParam for u16 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1u32.to_sql_param());
 /// ```
-impl SQLParameter for u32 {
+impl BindParam for u32 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1u64.to_sql_param());
 /// ```
-impl SQLParameter for u64 {
+impl BindParam for u64 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1u128.to_sql_param());
 /// ```
-impl SQLParameter for u128 {
+impl BindParam for u128 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1i8.to_sql_param());
 /// ```
-impl SQLParameter for i8 {
+impl BindParam for i8 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1i16.to_sql_param());
 /// ```
-impl SQLParameter for i16 {
+impl BindParam for i16 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1i32.to_sql_param());
 /// ```
-impl SQLParameter for i32 {
+impl BindParam for i32 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1i64.to_sql_param());
 /// ```
-impl SQLParameter for i64 {
+impl BindParam for i64 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1i128.to_sql_param());
 /// ```
-impl SQLParameter for i128 {
+impl BindParam for i128 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1f32.to_sql_param());
 /// ```
-impl SQLParameter for f32 {
+impl BindParam for f32 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 /// assert_eq!("1", 1f64.to_sql_param());
 /// ```
-impl SQLParameter for f64 {
+impl BindParam for f64 {
     fn to_sql_param(&self) -> String {
         self.to_string()
     }
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 ///
 /// assert_eq!("(1, 2, 3)", vec![1, 2, 3].to_sql_param());
 /// assert_eq!("('1', '2', '3')", vec!["1", "2", "3"].to_sql_param());
 /// ```
-impl<T> SQLParameter for Vec<T>
+impl<T> BindParam for Vec<T>
 where
-    T: SQLParameter,
+    T: BindParam,
 {
     fn to_sql_param(&self) -> String {
         param_array(self)
@@ -348,37 +348,37 @@ where
 
 /// ```
 /// use std::collections::HashMap;
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 ///
 /// // Map values are returned just like vectors, but in no particular order
 /// assert_eq!("(1)", HashMap::from([("a", 1)]).to_sql_param());
 /// assert_eq!("('1')", HashMap::from([("a", "1")]).to_sql_param());
 /// ```
-impl<U, T> SQLParameter for HashMap<U, T>
+impl<U, T> BindParam for HashMap<U, T>
 where
-    T: SQLParameter,
+    T: BindParam,
 {
     fn to_sql_param(&self) -> String {
         param_map(self)
     }
 }
 
-impl<U, T> SQLParameter for BTreeMap<U, T>
+impl<U, T> BindParam for BTreeMap<U, T>
 where
-    T: SQLParameter,
+    T: BindParam,
 {
     fn to_sql_param(&self) -> String {
         param_map(self)
     }
 }
 
-impl SQLParameter for Map<String, Value> {
+impl BindParam for Map<String, Value> {
     fn to_sql_param(&self) -> String {
         param_map(self)
     }
 }
 
-impl SQLParameter for Value {
+impl BindParam for Value {
     fn to_sql_param(&self) -> String {
         match self {
             Value::Null => "NULL".to_owned(),
@@ -392,16 +392,16 @@ impl SQLParameter for Value {
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 ///
 /// // References also work
 /// let x = 5;
 /// let y = &x;
 /// assert_eq!("5", y.to_sql_param());
 /// ```
-impl<T> SQLParameter for &T
+impl<T> BindParam for &T
 where
-    T: SQLParameter,
+    T: BindParam,
 {
     fn to_sql_param(&self) -> String {
         (*self).to_sql_param()
@@ -409,16 +409,16 @@ where
 }
 
 /// ```
-/// use exasol::SQLParameter;
+/// use exasol::BindParam;
 ///
 /// // Mutable references also work
 /// let mut x = 5;
 /// let y = &mut x;
 /// assert_eq!("5", y.to_sql_param());
 /// ```
-impl<T> SQLParameter for &mut T
+impl<T> BindParam for &mut T
 where
-    T: SQLParameter,
+    T: BindParam,
 {
     fn to_sql_param(&self) -> String {
         (&**self).to_sql_param()
@@ -426,11 +426,11 @@ where
 }
 
 /// Used to enable structs to be transposed as parameter maps ready use bind in a SQL query.
-/// Can generally be used along the [SQLParameter] trait to properly generate parameters.
+/// Can generally be used along the [BindParam] trait to properly generate parameters.
 /// ```
 /// use std::collections::HashMap;
 /// use serde_json::{Map, json, Value};
-/// use exasol::{ParameterMap, SQLParameter};
+/// use exasol::{BindParamMap, BindParam};
 ///
 ///let h = HashMap::from([("a".to_owned(), "1"), ("b".to_owned(), "2")]);
 ///let mut j = HashMap::from([("a".to_owned(), "1".to_owned()), ("b".to_owned(), "2".to_owned())]);
@@ -450,7 +450,7 @@ where
 ///     c: Vec<i32>
 /// }
 ///
-/// impl ParameterMap for SomeStruct {
+/// impl BindParamMap for SomeStruct {
 ///     fn into_params_map(self) -> HashMap<String, String> {
 ///        HashMap::from([
 ///             ("a".to_owned(), self.a.to_sql_param()),
@@ -463,11 +463,11 @@ where
 /// let some_struct = SomeStruct {a: "text".to_owned(), b: 50, c: vec![1, 2, 3]};
 /// println!("{:?}", some_struct.into_params_map());
 /// ```
-pub trait ParameterMap {
+pub trait BindParamMap {
     fn into_params_map(self) -> HashMap<String, String>;
 }
 
-impl ParameterMap for Map<String, Value> {
+impl BindParamMap for Map<String, Value> {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
             .map(|(k, v)| (k, v.to_sql_param()))
@@ -475,9 +475,9 @@ impl ParameterMap for Map<String, Value> {
     }
 }
 
-impl<T> ParameterMap for HashMap<String, T>
+impl<T> BindParamMap for HashMap<String, T>
 where
-    T: SQLParameter,
+    T: BindParam,
 {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
@@ -486,9 +486,9 @@ where
     }
 }
 
-impl<T> ParameterMap for BTreeMap<String, T>
+impl<T> BindParamMap for BTreeMap<String, T>
 where
-    T: SQLParameter,
+    T: BindParam,
 {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
@@ -497,10 +497,10 @@ where
     }
 }
 
-impl<I, T> ParameterMap for &I
+impl<I, T> BindParamMap for &I
 where
     for<'a> &'a I: IntoIterator<Item = (&'a String, &'a T)>,
-    T: SQLParameter,
+    T: BindParam,
 {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()
@@ -509,10 +509,10 @@ where
     }
 }
 
-impl<I, T> ParameterMap for &mut I
+impl<I, T> BindParamMap for &mut I
 where
     for<'a> &'a mut I: IntoIterator<Item = (&'a String, &'a mut T)>,
-    T: SQLParameter,
+    T: BindParam,
 {
     fn into_params_map(self) -> HashMap<String, String> {
         self.into_iter()

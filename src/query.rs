@@ -273,3 +273,39 @@ impl Drop for PreparedStatement {
         self.close().ok();
     }
 }
+
+/// Trait that can be implemented for types so
+/// they get accepted as queries by the [Connection] type.
+pub trait Query {
+    fn to_query(&self) -> &str;
+}
+
+impl Query for &str {
+    fn to_query(&self) -> &str {
+        *self
+    }
+}
+
+impl Query for String {
+    fn to_query(&self) -> &str {
+        self
+    }
+}
+
+impl<T> Query for &T
+where
+    T: Query,
+{
+    fn to_query(&self) -> &str {
+        (*self).to_query()
+    }
+}
+
+impl<T> Query for &mut T
+where
+    T: Query,
+{
+    fn to_query(&self) -> &str {
+        (&**self).to_query()
+    }
+}

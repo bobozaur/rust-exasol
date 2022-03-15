@@ -12,7 +12,7 @@ use url::Url;
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::constants::{NOT_PONG, NO_PUBLIC_KEY, NO_RESPONSE_DATA, NO_RESULT_SET, WS_STR};
 use crate::error::{ConnectionError, Error, RequestError, Result};
-use crate::query::{QueryResult, PreparedStatement};
+use crate::query::{PreparedStatement, Query, QueryResult};
 use crate::response::{Response, ResponseData};
 
 /// Convenience function to quickly connect using default options.
@@ -74,7 +74,7 @@ impl Connection {
         })
     }
 
-    /// Sends a query to the database and waits for the result.
+    /// Sends a type implementing [Query] to the database and waits for the result.
     /// Returns a [QueryResult]
     ///
     /// ```
@@ -98,11 +98,16 @@ impl Connection {
     ///         }
     ///     }
     /// ```
-    pub fn execute(&mut self, query: &str) -> Result<QueryResult> {
-        (*self.con).borrow_mut().execute(&self.con, query)
+    pub fn execute<T>(&mut self, query: T) -> Result<QueryResult>
+    where
+        T: Query,
+    {
+        (*self.con)
+            .borrow_mut()
+            .execute(&self.con, query.to_query())
     }
 
-    /// Sends multiple queries to the database and waits for the result.
+    /// Sends a vector of type implementing [Query] to the database and waits for the result.
     /// Returns a [Vec<QueryResult>].
     ///
     /// ```
@@ -115,11 +120,17 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3".to_owned(), "SELECT 4".to_owned())).unwrap();
-    /// let results: Vec<QueryResult> = exa_con.execute_batch(vec!("SELECT 3".to_owned(), "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2".to_owned())).unwrap();
+    /// let queries = vec!["SELECT 3", "SELECT 4"];
+    /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
+    /// let queries = vec!["SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2"];
+    /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
     /// ```
-    pub fn execute_batch(&mut self, queries: Vec<String>) -> Result<Vec<QueryResult>> {
-        (*self.con).borrow_mut().execute_batch(&self.con, queries)
+    pub fn execute_batch<T>(&mut self, queries: &Vec<T>) -> Result<Vec<QueryResult>>
+    where
+        T: Query,
+    {
+        let queries = queries.iter().map(|q| q.to_query()).collect();
+        (*self.con).borrow_mut().execute_batch(&self.con, &queries)
     }
 
     /// Creates a prepared statement of type [PreparedStatement].
@@ -361,7 +372,7 @@ impl ConnectionImpl {
     pub(crate) fn execute_batch(
         &mut self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
-        queries: Vec<String>,
+        queries: &Vec<&str>,
     ) -> Result<Vec<QueryResult>> {
         let payload = json!({"command": "executeBatch", "sqlTexts": queries});
         self.exec_with_results(con_impl, payload)

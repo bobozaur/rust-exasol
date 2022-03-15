@@ -50,18 +50,22 @@ mod tests {
         if let QueryResult::ResultSet(r) = result {
             let x = r.take(50).collect::<Result<Vec<Row>>>();
             if let Ok(v) = x {
-                for row in v.iter() {println!("{:?}", row)}
+                for row in v.iter() {
+                    // println!("{:?}", row)
+                }
             }
         }
 
         println!("{}", now.elapsed().as_millis());
 
-        //
-        // let result = exa_con
-        //     .execute("DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2")
-        //     .unwrap();
-        //
-        // let results = exa_con.execute_batch(vec!["SELECT 3".to_owned(), "SELECT 4".to_owned()]).unwrap();
+        let query = "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2".to_owned();
+        let result = exa_con.execute(&query).unwrap();
+
+        // let result = exa_con.execute(query).unwrap();
+        let queries = vec!["SELECT 3".to_owned(), "SELECT 4".to_owned()];
+        let results = exa_con
+            .execute_batch(&queries)
+            .unwrap();
         //
         // let results = exa_con
         //     .execute_batch(vec!["SELECT 3".to_owned(), "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2".to_owned()])
