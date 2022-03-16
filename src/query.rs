@@ -2,7 +2,7 @@ use crate::connection::ConnectionImpl;
 use crate::error::{RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResultSetDe, Row};
 use crate::response::{ParameterData, PreparedStatementDe};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
@@ -77,7 +77,7 @@ pub struct ResultSet {
     chunk_rows_pos: usize,
     result_set_handle: Option<u16>,
     columns: Vec<Column>,
-    iter: Vec<IntoIter<Value>>,
+    data_iter: IntoIter<Row>,
     connection: Rc<RefCell<ConnectionImpl>>,
     is_closed: bool,
 }
@@ -118,21 +118,14 @@ impl ResultSet {
             chunk_rows_pos: 0,
             result_set_handle: result_set.result_set_handle,
             columns: result_set.columns,
-            iter: result_set.data.into_iter().map(|v| v.into_iter()).collect(),
+            data_iter: result_set.data.into_iter(),
             connection: Rc::clone(con_rc),
             is_closed: false,
         }
     }
 
-    /// Iterates over the iterator of iterators collecting the next() value of each of them
-    /// and composing a row, which it then returns.
-    /// If any iterator returns None, None gets returned.
     fn next_row(&mut self) -> Option<Result<Row>> {
-        self.iter
-            .iter_mut()
-            .map(|iter| iter.next())
-            .collect::<Option<Row>>()
-            .and_then(|r| if r.is_empty() { None } else { Some(Ok(r)) })
+        self.data_iter.next().map(|r| Ok(r))
     }
 
     /// Closes the result set if it wasn't already closed
@@ -174,7 +167,7 @@ impl ResultSet {
                     .and_then(|f| {
                         self.chunk_rows_num = f.chunk_rows_num;
                         self.chunk_rows_pos = 0;
-                        self.iter = f.data.into_iter().map(|v| v.into_iter()).collect();
+                        self.data_iter = f.data.into_iter();
                         Ok(())
                     })
             })

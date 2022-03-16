@@ -1,12 +1,14 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 use crate::con_opts::ProtocolVersion;
 use crate::constants::{MISSING_DATA, NO_RESPONSE_DATA};
 use crate::error::Result;
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeSeed, Error, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::connection::ConnectionImpl;
@@ -189,7 +191,7 @@ fn deser_fetched_data() {
 pub(crate) struct FetchedData {
     #[serde(rename = "numRows")]
     pub(crate) chunk_rows_num: usize,
-    #[serde(default)]
+    #[serde(deserialize_with = "transpose_matrix")]
     pub(crate) data: Vec<Row>,
 }
 
@@ -375,7 +377,7 @@ pub(crate) struct ResultSetDe {
     pub(crate) num_columns: u8,
     pub(crate) result_set_handle: Option<u16>,
     pub(crate) columns: Vec<Column>,
-    #[serde(default)]
+    #[serde(deserialize_with = "transpose_matrix")]
     pub(crate) data: Vec<Row>,
 }
 
@@ -448,4 +450,104 @@ impl Display for DataType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.type_name)
     }
+}
+
+fn transpose_matrix<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<Row>, D::Error> {
+    struct FirstColumn<'a>(&'a mut Vec<Row>);
+
+    impl<'de, 'a> DeserializeSeed<'de> for FirstColumn<'a> {
+        type Value = ();
+
+        fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_seq(FirstColumnVisitor(self.0))
+        }
+    }
+
+    struct FirstColumnVisitor<'a: 'a>(&'a mut Vec<Row>);
+
+    impl<'de, 'a> Visitor<'de> for FirstColumnVisitor<'a> {
+        type Value = ();
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(formatter, "An array of JSON values")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<(), A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            while let Some(elem) = seq.next_element()? {
+                self.0.push(vec![elem])
+            }
+            Ok(())
+        }
+    }
+
+    struct OtherColumn<'a>(&'a mut Vec<Row>);
+
+    impl<'de, 'a> DeserializeSeed<'de> for OtherColumn<'a> {
+        type Value = ();
+
+        fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            deserializer.deserialize_seq(OtherColumnVisitor(self.0))
+        }
+    }
+
+    struct OtherColumnVisitor<'a: 'a>(&'a mut Vec<Row>);
+
+    impl<'de, 'a> Visitor<'de> for OtherColumnVisitor<'a> {
+        type Value = ();
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(formatter, "An array of JSON values")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<(), A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut i = 0;
+            while let Some(elem) = seq.next_element()? {
+                self.0
+                    .get_mut(i)
+                    .ok_or(A::Error::custom("Unequal columns and rows"))?
+                    .push(elem);
+                i += 1;
+            }
+            Ok(())
+        }
+    }
+
+    struct OuterVecVisitor;
+
+    impl<'de> Visitor<'de> for OuterVecVisitor {
+        type Value = Vec<Row>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(formatter, "An array of arrays")
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut transposed = Vec::new();
+            // Do first iteration to create and push inner Vec's into the one declared above.
+            seq.next_element_seed(FirstColumn(&mut transposed))?;
+            // Then keep appending to these vectors
+            // already created in outer vec while there's data
+            while let Some(_) = seq.next_element_seed(OtherColumn(&mut transposed))? {}
+            Ok(transposed)
+        }
+    }
+
+    deserializer.deserialize_seq(OuterVecVisitor)
 }
