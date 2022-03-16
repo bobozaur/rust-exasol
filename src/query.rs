@@ -274,7 +274,7 @@ impl Drop for PreparedStatement {
     }
 }
 
-/// Trait that can be implemented for types so
+/// Trait implemented for `&str`, `String` and their reference types so
 /// they get accepted as queries by the [Connection] type.
 pub trait Query {
     fn to_query(&self) -> &str;
