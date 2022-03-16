@@ -17,29 +17,6 @@ static DEFAULT_PORT: u32 = 8563;
 static DEFAULT_FETCH_SIZE: u32 = 5 * 1024 * 1024;
 static DEFAULT_CLIENT_PREFIX: &str = "Rust Exasol";
 
-/// Visitor for deserializing JSON into ProtocolVersion values.
-struct ProtocolVersionVisitor;
-
-impl<'de> Visitor<'de> for ProtocolVersionVisitor {
-    type Value = ProtocolVersion;
-
-    fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
-        formatter.write_str("Expecting an u8 representing the websocket API protocol version.")
-    }
-
-    fn visit_u8<E>(self, v: u8) -> std::result::Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        match v {
-            1 => Ok(ProtocolVersion::V1),
-            2 => Ok(ProtocolVersion::V2),
-            3 => Ok(ProtocolVersion::V3),
-            _ => Err(E::custom("Unknown protocol version!")),
-        }
-    }
-}
-
 /// Enum listing the protocol versions that can be used when
 /// establishing a websocket connection to Exasol.
 /// Defaults to the highest defined protocol version and
@@ -79,6 +56,30 @@ impl<'de> Deserialize<'de> for ProtocolVersion {
     where
         D: Deserializer<'de>,
     {
+        /// Visitor for deserializing JSON into ProtocolVersion values.
+        struct ProtocolVersionVisitor;
+
+        impl<'de> Visitor<'de> for ProtocolVersionVisitor {
+            type Value = ProtocolVersion;
+
+            fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+                formatter
+                    .write_str("Expecting an u8 representing the websocket API protocol version.")
+            }
+
+            fn visit_u8<E>(self, v: u8) -> std::result::Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match v {
+                    1 => Ok(ProtocolVersion::V1),
+                    2 => Ok(ProtocolVersion::V2),
+                    3 => Ok(ProtocolVersion::V3),
+                    _ => Err(E::custom("Unknown protocol version!")),
+                }
+            }
+        }
+
         deserializer.deserialize_u8(ProtocolVersionVisitor)
     }
 }
