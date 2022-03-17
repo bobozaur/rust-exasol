@@ -10,7 +10,7 @@ mod tests {
 
     use exasol::error::Result;
     use exasol::{connect, PreparedStatement, QueryResult};
-    use exasol::{MapRow, Row, TryIntoType};
+    use exasol::{MapRow, Row, TryRowToType};
 
     #[test]
     #[allow(unused)]

@@ -24,13 +24,13 @@ impl RowType for MapRow {
 }
 
 /// Trait for converting an Exasol row into a specific type.
-pub trait TryIntoType: private::Sealed {
+pub trait TryRowToType: private::Sealed {
     fn into_type<T>(self) -> std::result::Result<T, serde_json::Error>
     where
         T: for<'de> Deserialize<'de>;
 }
 
-impl TryIntoType for Row {
+impl TryRowToType for Row {
     fn into_type<T>(self) -> std::result::Result<T, serde_json::Error>
     where
         T: for<'de> Deserialize<'de>,
@@ -39,7 +39,7 @@ impl TryIntoType for Row {
     }
 }
 
-impl TryIntoType for MapRow {
+impl TryRowToType for MapRow {
     fn into_type<T>(self) -> std::result::Result<T, serde_json::Error>
     where
         T: for<'de> Deserialize<'de>,

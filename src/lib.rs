@@ -130,4 +130,4 @@ pub use crate::connection::{connect, Connection};
 pub use crate::params::{bind, BindParam, BindParamMap};
 pub use crate::query::{PreparedStatement, QueryResult, ResultSet};
 pub use crate::response::{Column, DataType};
-pub use crate::row::{MapRow, Row, TryIntoType};
+pub use crate::row::{MapRow, Row, TryRowToType};
