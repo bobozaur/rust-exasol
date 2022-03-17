@@ -5,10 +5,10 @@ mod tests {
     use std::collections::HashMap;
     use std::env;
 
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use exasol::error::Result;
-    use exasol::{connect, PreparedStatement, QueryResult, Row};
+    use exasol::{connect, PreparedStatement, QueryResult};
 
     #[test]
     #[allow(unused)]
@@ -48,7 +48,7 @@ mod tests {
             .unwrap();
 
         if let QueryResult::ResultSet(r) = result {
-            let x = r.take(50).collect::<Result<Vec<Row>>>();
+            let x = r.take(50).collect::<Result<Vec<Vec<Value>>>>();
             if let Ok(v) = x {
                 for row in v.iter() {
                     println!("{:?}", row)

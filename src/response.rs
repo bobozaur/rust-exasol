@@ -13,9 +13,7 @@ use serde_json::{json, Value};
 
 use crate::connection::ConnectionImpl;
 use crate::query::QueryResult;
-use crate::PreparedStatement;
-
-pub type Row = Vec<Value>;
+use crate::{PreparedStatement};
 
 /// Generic response received from the Exasol server
 /// This is the first deserialization step
@@ -191,8 +189,8 @@ fn deser_fetched_data() {
 pub(crate) struct FetchedData {
     #[serde(rename = "numRows")]
     pub(crate) chunk_rows_num: usize,
-    #[serde(deserialize_with = "transpose_matrix")]
-    pub(crate) data: Vec<Row>,
+    #[serde(deserialize_with = "to_row_major")]
+    pub(crate) data: Vec<Vec<Value>>,
 }
 
 #[test]
@@ -377,8 +375,8 @@ pub(crate) struct ResultSetDe {
     pub(crate) num_columns: u8,
     pub(crate) result_set_handle: Option<u16>,
     pub(crate) columns: Vec<Column>,
-    #[serde(deserialize_with = "transpose_matrix")]
-    pub(crate) data: Vec<Row>,
+    #[serde(deserialize_with = "to_row_major")]
+    pub(crate) data: Vec<Vec<Value>>,
 }
 
 #[test]
@@ -452,10 +450,12 @@ impl Display for DataType {
     }
 }
 
-fn transpose_matrix<'de, D: Deserializer<'de>>(
+/// Deserialization function used to turn Exasol's
+/// column major data into row major format during deserialization.
+fn to_row_major<'de, D: Deserializer<'de>>(
     deserializer: D,
-) -> std::result::Result<Vec<Row>, D::Error> {
-    struct FirstColumn<'a>(&'a mut Vec<Row>);
+) -> std::result::Result<Vec<Vec<Value>>, D::Error> {
+    struct FirstColumn<'a>(&'a mut Vec<Vec<Value>>);
 
     impl<'de, 'a> DeserializeSeed<'de> for FirstColumn<'a> {
         type Value = ();
@@ -468,7 +468,7 @@ fn transpose_matrix<'de, D: Deserializer<'de>>(
         }
     }
 
-    struct FirstColumnVisitor<'a: 'a>(&'a mut Vec<Row>);
+    struct FirstColumnVisitor<'a>(&'a mut Vec<Vec<Value>>);
 
     impl<'de, 'a> Visitor<'de> for FirstColumnVisitor<'a> {
         type Value = ();
@@ -488,7 +488,7 @@ fn transpose_matrix<'de, D: Deserializer<'de>>(
         }
     }
 
-    struct OtherColumn<'a>(&'a mut Vec<Row>);
+    struct OtherColumn<'a>(&'a mut Vec<Vec<Value>>);
 
     impl<'de, 'a> DeserializeSeed<'de> for OtherColumn<'a> {
         type Value = ();
@@ -501,7 +501,7 @@ fn transpose_matrix<'de, D: Deserializer<'de>>(
         }
     }
 
-    struct OtherColumnVisitor<'a: 'a>(&'a mut Vec<Row>);
+    struct OtherColumnVisitor<'a>(&'a mut Vec<Vec<Value>>);
 
     impl<'de, 'a> Visitor<'de> for OtherColumnVisitor<'a> {
         type Value = ();
@@ -529,7 +529,7 @@ fn transpose_matrix<'de, D: Deserializer<'de>>(
     struct OuterVecVisitor;
 
     impl<'de> Visitor<'de> for OuterVecVisitor {
-        type Value = Vec<Row>;
+        type Value = Vec<Vec<serde_json::Value>>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             write!(formatter, "An array of arrays")

@@ -1,8 +1,8 @@
 use crate::connection::ConnectionImpl;
 use crate::error::{RequestError, Result};
-use crate::response::{Column, QueryResultDe, ResultSetDe, Row};
+use crate::response::{Column, QueryResultDe, ResultSetDe};
 use crate::response::{ParameterData, PreparedStatementDe};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
@@ -44,7 +44,8 @@ impl QueryResult {
 /// Further rows get fetched as needed
 ///
 /// ```
-/// # use exasol::{connect, Row, QueryResult};
+/// # use exasol::{connect, QueryResult};
+/// # use serde_json::Value;
 /// # use exasol::error::Result;
 /// # use std::env;
 ///
@@ -56,7 +57,7 @@ impl QueryResult {
 /// let result = exa_con.execute("SELECT * FROM EXA_ALL_OBJECTS LIMIT 2000;").unwrap();
 ///
 /// if let QueryResult::ResultSet(r) = result {
-///     let x = r.take(50).collect::<Result<Vec<Row>>>();
+///     let x = r.take(50).collect::<Result<Vec<Vec<Value>>>>();
 ///         if let Ok(v) = x {
 ///             for row in v.iter() {
 ///                 // do stuff
@@ -77,7 +78,7 @@ pub struct ResultSet {
     chunk_rows_pos: usize,
     result_set_handle: Option<u16>,
     columns: Vec<Column>,
-    data_iter: IntoIter<Row>,
+    data_iter: IntoIter<Vec<Value>>,
     connection: Rc<RefCell<ConnectionImpl>>,
     is_closed: bool,
 }
@@ -124,7 +125,7 @@ impl ResultSet {
         }
     }
 
-    fn next_row(&mut self) -> Option<Result<Row>> {
+    fn next_row(&mut self) -> Option<Result<Vec<Value>>> {
         self.data_iter.next().map(|r| Ok(r))
     }
 
@@ -176,7 +177,7 @@ impl ResultSet {
 
 /// Making [ResultSet] an iterator
 impl Iterator for ResultSet {
-    type Item = Result<Row>;
+    type Item = Result<Vec<Value>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let row = self.next_row().or_else(|| {
@@ -229,7 +230,7 @@ impl PreparedStatement {
         }
     }
 
-    pub fn execute(&self, data: Vec<Row>) -> Result<QueryResult> {
+    pub fn execute(&self, data: Vec<Vec<Value>>) -> Result<QueryResult> {
         let dummy_num_cols = 0u8;
         let dummy_cols_vec = vec![];
 

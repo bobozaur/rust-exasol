@@ -127,5 +127,5 @@ mod constants;
 pub use crate::con_opts::ConOpts;
 pub use crate::connection::{connect, Connection};
 pub use crate::params::{bind, BindParamMap, BindParam};
-pub use crate::response::{Column, DataType, Row};
+pub use crate::response::{Column, DataType};
 pub use crate::query::{QueryResult, ResultSet, PreparedStatement};
