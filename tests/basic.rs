@@ -5,10 +5,12 @@ mod tests {
     use std::collections::HashMap;
     use std::env;
 
+    use serde::Deserialize;
     use serde_json::{json, Value};
 
     use exasol::error::Result;
     use exasol::{connect, PreparedStatement, QueryResult};
+    use exasol::{MapRow, Row, TryIntoType};
 
     #[test]
     #[allow(unused)]
@@ -44,16 +46,27 @@ mod tests {
         let now = Instant::now();
 
         let result = exa_con
-            .execute("SELECT * FROM DIM_SIMPLE_DATE WHERE CALENDARYEAR = 2021;")
+            .execute("SELECT 1 as col1, 2 as col2, 3 as col3;")
             .unwrap();
 
+        #[derive(Debug, Deserialize)]
+        #[serde(rename_all = "UPPERCASE")]
+        struct Test {
+            col1: u8,
+            col2: u8,
+            col3: u8,
+        }
+
         if let QueryResult::ResultSet(r) = result {
-            let x = r.take(50).collect::<Result<Vec<Vec<Value>>>>();
-            if let Ok(v) = x {
-                for row in v.iter() {
-                    println!("{:?}", row)
-                }
+            for row in r.with_row_type::<MapRow>() {
+                println!("{:?}", row.unwrap().into_type::<Test>());
             }
+            // let x = r.take(50).collect::<Result<Vec<Vec<Value>>>>();
+            // if let Ok(v) = x {
+            //     for row in v.iter() {
+            //         println!("{:?}", row)
+            //     }
+            // }
         }
 
         println!("{}", now.elapsed().as_millis());

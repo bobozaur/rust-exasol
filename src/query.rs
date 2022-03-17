@@ -2,9 +2,11 @@ use crate::connection::ConnectionImpl;
 use crate::error::{RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResultSetDe};
 use crate::response::{ParameterData, PreparedStatementDe};
+use crate::row::{Row, RowType};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
+use std::marker::PhantomData;
 use std::rc::Rc;
 use std::vec::IntoIter;
 
@@ -44,7 +46,7 @@ impl QueryResult {
 /// Further rows get fetched as needed
 ///
 /// ```
-/// # use exasol::{connect, QueryResult};
+/// # use exasol::{connect, QueryResult, Row};
 /// # use serde_json::Value;
 /// # use exasol::error::Result;
 /// # use std::env;
@@ -57,7 +59,7 @@ impl QueryResult {
 /// let result = exa_con.execute("SELECT * FROM EXA_ALL_OBJECTS LIMIT 2000;").unwrap();
 ///
 /// if let QueryResult::ResultSet(r) = result {
-///     let x = r.take(50).collect::<Result<Vec<Vec<Value>>>>();
+///     let x = r.take(50).collect::<Result<Vec<Row>>>();
 ///         if let Ok(v) = x {
 ///             for row in v.iter() {
 ///                 // do stuff
@@ -70,7 +72,7 @@ impl QueryResult {
 /// based on the `fetch_size` parameter set in the [ConOpts](crate::ConOpts) used when constructing
 /// the [Connection](crate::Connection), until the result set is entirely read.
 #[allow(unused)]
-pub struct ResultSet {
+pub struct ResultSet<T: RowType = Row> {
     num_columns: u8,
     total_rows_num: u32,
     total_rows_pos: u32,
@@ -81,9 +83,13 @@ pub struct ResultSet {
     data_iter: IntoIter<Vec<Value>>,
     connection: Rc<RefCell<ConnectionImpl>>,
     is_closed: bool,
+    row_type: PhantomData<T>,
 }
 
-impl Debug for ResultSet {
+impl<T> Debug for ResultSet<T>
+where
+    T: RowType,
+{
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -93,7 +99,10 @@ impl Debug for ResultSet {
     }
 }
 
-impl ResultSet {
+impl<T> ResultSet<T>
+where
+    T: RowType,
+{
     /// Returns a reference to a [Vec<Column>] of the result set columns.
     pub fn columns(&self) -> &Vec<Column> {
         &self.columns
@@ -109,6 +118,25 @@ impl ResultSet {
         &self.total_rows_num
     }
 
+    pub fn with_row_type<U>(mut self) -> ResultSet<U>
+    where
+        U: RowType,
+    {
+        ResultSet {
+            num_columns: self.num_columns,
+            total_rows_num: self.total_rows_num,
+            total_rows_pos: self.total_rows_pos,
+            chunk_rows_num: self.chunk_rows_num,
+            chunk_rows_pos: self.chunk_rows_pos,
+            result_set_handle: self.result_set_handle,
+            columns: std::mem::replace(&mut self.columns, vec![]),
+            data_iter: std::mem::replace(&mut self.data_iter, vec![].into_iter()),
+            connection: Rc::clone(&self.connection),
+            is_closed: self.is_closed,
+            row_type: PhantomData,
+        }
+    }
+
     /// Method that generates the [ResultSet] struct based on [ResultSetDe].
     pub(crate) fn from_de(result_set: ResultSetDe, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Self {
         Self {
@@ -122,6 +150,7 @@ impl ResultSet {
             data_iter: result_set.data.into_iter(),
             connection: Rc::clone(con_rc),
             is_closed: false,
+            row_type: PhantomData,
         }
     }
 
@@ -176,10 +205,13 @@ impl ResultSet {
 }
 
 /// Making [ResultSet] an iterator
-impl Iterator for ResultSet {
-    type Item = Result<Vec<Value>>;
+impl<T> Iterator for ResultSet<T>
+where
+    T: RowType,
+{
+    type Item = Result<T>;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<Result<T>> {
         let row = self.next_row().or_else(|| {
             // All rows retrieved
             if self.total_rows_pos >= self.total_rows_num {
@@ -200,11 +232,16 @@ impl Iterator for ResultSet {
 
         // If row is None, all rows were iterated
         // so we're closing the result set, propagating the error, if any
-        row.or_else(|| self.close().map_or_else(|e| Some(Err(e)), |_| None))
+        // We're also converting the Vec<Value> base row to our Row type before returning it
+        row.map(|r| r.map(|v| T::build(v, &self.columns)))
+            .or_else(|| self.close().map_or_else(|e| Some(Err(e)), |_| None))
     }
 }
 
-impl Drop for ResultSet {
+impl<T> Drop for ResultSet<T>
+where
+    T: RowType,
+{
     fn drop(&mut self) {
         self.close().ok();
     }

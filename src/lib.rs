@@ -72,7 +72,7 @@
 //! When iterating over a result set, because fetch requests may fail, every row
 //! ([Row] is an alias for [Vec<serde_json::Value>]) is in the form of a [Result].
 //!
-//! `collect` can handle that for us and convert a [Vec<Result<T>>] into a [Result<Vec<T>>],
+//! `collect` can handle that for us and convert a [Vec<Result<Row>>] into a [Result<Vec<Row>>],
 //! stopping on the first error encountered, if any.
 //!
 //! # Parameter binding
@@ -118,14 +118,16 @@
 
 pub mod con_opts;
 pub mod connection;
+mod constants;
 pub mod error;
 pub mod params;
 pub mod query;
 pub mod response;
-mod constants;
+pub mod row;
 
 pub use crate::con_opts::ConOpts;
 pub use crate::connection::{connect, Connection};
-pub use crate::params::{bind, BindParamMap, BindParam};
+pub use crate::params::{bind, BindParam, BindParamMap};
+pub use crate::query::{PreparedStatement, QueryResult, ResultSet};
 pub use crate::response::{Column, DataType};
-pub use crate::query::{QueryResult, ResultSet, PreparedStatement};
+pub use crate::row::{MapRow, Row, TryIntoType};

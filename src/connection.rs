@@ -150,8 +150,12 @@ impl Connection {
     /// prepared_stmt.execute(vec![vec![json!(1)]]).unwrap();
     /// ```
     pub fn prepare<T>(&mut self, query: T) -> Result<PreparedStatement>
-    where T: Query {
-        (*self.con).borrow_mut().prepare(&self.con, query.to_query())
+    where
+        T: Query,
+    {
+        (*self.con)
+            .borrow_mut()
+            .prepare(&self.con, query.to_query())
     }
 
     /// Ping the server and wait for Pong frame

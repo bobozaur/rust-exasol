@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use crate::connection::ConnectionImpl;
 use crate::query::QueryResult;
-use crate::{PreparedStatement};
+use crate::PreparedStatement;
 
 /// Generic response received from the Exasol server
 /// This is the first deserialization step
@@ -189,7 +189,7 @@ fn deser_fetched_data() {
 pub(crate) struct FetchedData {
     #[serde(rename = "numRows")]
     pub(crate) chunk_rows_num: usize,
-    #[serde(deserialize_with = "to_row_major")]
+    #[serde(default, deserialize_with = "to_row_major")]
     pub(crate) data: Vec<Vec<Value>>,
 }
 
@@ -375,7 +375,7 @@ pub(crate) struct ResultSetDe {
     pub(crate) num_columns: u8,
     pub(crate) result_set_handle: Option<u16>,
     pub(crate) columns: Vec<Column>,
-    #[serde(deserialize_with = "to_row_major")]
+    #[serde(default, deserialize_with = "to_row_major")]
     pub(crate) data: Vec<Vec<Value>>,
 }
 
