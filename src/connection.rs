@@ -5,6 +5,7 @@ use std::net::TcpStream;
 use std::rc::Rc;
 
 use rsa::{pkcs1::FromRsaPublicKey, RsaPublicKey};
+use serde::Serialize;
 use serde_json::{json, Value};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
@@ -12,7 +13,7 @@ use url::Url;
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::constants::{NOT_PONG, NO_PUBLIC_KEY, NO_RESPONSE_DATA, NO_RESULT_SET, WS_STR};
 use crate::error::{ConnectionError, Error, RequestError, Result};
-use crate::query::{PreparedStatement, Query, QueryResult};
+use crate::query::{PreparedStatement, QueryResult};
 use crate::response::{Response, ResponseData};
 
 /// Convenience function to quickly connect using default options.
@@ -74,7 +75,7 @@ impl Connection {
         })
     }
 
-    /// Sends a type implementing [Query] to the database and waits for the result.
+    /// Sends a query to the database and waits for the result.
     /// Returns a [QueryResult]
     ///
     /// ```
@@ -100,14 +101,14 @@ impl Connection {
     /// ```
     pub fn execute<T>(&mut self, query: T) -> Result<QueryResult>
     where
-        T: Query,
+        T: AsRef<str> + Serialize,
     {
         (*self.con)
             .borrow_mut()
-            .execute(&self.con, query.to_query())
+            .execute(&self.con, &query)
     }
 
-    /// Sends a vector of type implementing [Query] to the database and waits for the result.
+    /// Sends multiple queries to the database and waits for the result.
     /// Returns a [Vec<QueryResult>].
     ///
     /// ```
@@ -125,11 +126,10 @@ impl Connection {
     /// let queries = vec!["SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2"];
     /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
     /// ```
-    pub fn execute_batch<T>(&mut self, queries: &Vec<T>) -> Result<Vec<QueryResult>>
+    pub fn execute_batch<T>(&mut self, queries: &[T]) -> Result<Vec<QueryResult>>
     where
-        T: Query,
+        T: AsRef<str> + Serialize,
     {
-        let queries = queries.iter().map(|q| q.to_query()).collect();
         (*self.con).borrow_mut().execute_batch(&self.con, &queries)
     }
 
@@ -151,11 +151,11 @@ impl Connection {
     /// ```
     pub fn prepare<T>(&mut self, query: T) -> Result<PreparedStatement>
     where
-        T: Query,
+        T: AsRef<str> + Serialize,
     {
         (*self.con)
             .borrow_mut()
-            .prepare(&self.con, query.to_query())
+            .prepare(&self.con, &query)
     }
 
     /// Ping the server and wait for Pong frame
@@ -363,22 +363,24 @@ impl ConnectionImpl {
 
     /// Sends the payload to Exasol to execute one query
     /// and retrieves the first element from the resulted Vec<QueryResult>
-    pub(crate) fn execute(
+    pub(crate) fn execute<T>(
         &mut self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
-        query: &str,
-    ) -> Result<QueryResult> {
+        query: &T,
+    ) -> Result<QueryResult>
+    where T: AsRef<str> + Serialize {
         let payload = json!({"command": "execute", "sqlText": query});
         self.exec_and_get_first(con_impl, payload)
     }
 
     /// Sends the payload to Exasol to execute multiple queries
     /// and retrieves the results as a vector of QueryResult enums
-    pub(crate) fn execute_batch(
+    pub(crate) fn execute_batch<T>(
         &mut self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
-        queries: &Vec<&str>,
-    ) -> Result<Vec<QueryResult>> {
+        queries: &[T],
+    ) -> Result<Vec<QueryResult>>
+    where T: AsRef<str> + Serialize {
         let payload = json!({"command": "executeBatch", "sqlTexts": queries});
         self.exec_with_results(con_impl, payload)
     }
@@ -400,11 +402,12 @@ impl ConnectionImpl {
     }
 
     /// Creates a prepared statement
-    pub(crate) fn prepare(
+    pub(crate) fn prepare<T>(
         &mut self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
-        query: &str,
-    ) -> Result<PreparedStatement> {
+        query: &T,
+    ) -> Result<PreparedStatement>
+    where T: AsRef<str> + Serialize {
         let payload = json!({"command": "createPreparedStatement", "sqlText": query});
         self.get_resp_data(payload)
             .map_err(|e| e.conv_query_error())

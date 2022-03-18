@@ -2,6 +2,7 @@
 #[cfg(test)]
 #[allow(unused)]
 mod tests {
+    use std::borrow::Cow;
     use std::collections::HashMap;
     use std::env;
 
@@ -46,7 +47,7 @@ mod tests {
         let now = Instant::now();
 
         let result = exa_con
-            .execute("SELECT 1 as col1, 2 as col2, 3 as col3;")
+            .execute("SELECT 1 as col1, 2 as col2, 3 as col3 UNION ALL SELECT 4 as col1, 5 as col2, 6 as col3;")
             .unwrap();
 
         #[derive(Debug, Deserialize)]
@@ -58,7 +59,9 @@ mod tests {
         }
 
         if let QueryResult::ResultSet(r) = result {
-            for row in r.with_row_type::<MapRow>() {
+            let mut map_r = r.with_row_type::<MapRow>();
+            let y = (&mut map_r).into_iter();
+            for row in y {
                 println!("{:?}", row.unwrap().into_type::<Test>());
             }
             // let x = r.take(50).collect::<Result<Vec<Vec<Value>>>>();
