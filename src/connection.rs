@@ -103,9 +103,7 @@ impl Connection {
     where
         T: AsRef<str> + Serialize,
     {
-        (*self.con)
-            .borrow_mut()
-            .execute(&self.con, &query)
+        (*self.con).borrow_mut().execute(&self.con, &query)
     }
 
     /// Sends multiple queries to the database and waits for the result.
@@ -153,9 +151,7 @@ impl Connection {
     where
         T: AsRef<str> + Serialize,
     {
-        (*self.con)
-            .borrow_mut()
-            .prepare(&self.con, &query)
+        (*self.con).borrow_mut().prepare(&self.con, &query)
     }
 
     /// Ping the server and wait for Pong frame
@@ -368,7 +364,9 @@ impl ConnectionImpl {
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         query: &T,
     ) -> Result<QueryResult>
-    where T: AsRef<str> + Serialize {
+    where
+        T: AsRef<str> + Serialize,
+    {
         let payload = json!({"command": "execute", "sqlText": query});
         self.exec_and_get_first(con_impl, payload)
     }
@@ -380,7 +378,9 @@ impl ConnectionImpl {
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         queries: &[T],
     ) -> Result<Vec<QueryResult>>
-    where T: AsRef<str> + Serialize {
+    where
+        T: AsRef<str> + Serialize,
+    {
         let payload = json!({"command": "executeBatch", "sqlTexts": queries});
         self.exec_with_results(con_impl, payload)
     }
@@ -407,7 +407,9 @@ impl ConnectionImpl {
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         query: &T,
     ) -> Result<PreparedStatement>
-    where T: AsRef<str> + Serialize {
+    where
+        T: AsRef<str> + Serialize,
+    {
         let payload = json!({"command": "createPreparedStatement", "sqlText": query});
         self.get_resp_data(payload)
             .map_err(|e| e.conv_query_error())

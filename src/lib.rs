@@ -78,7 +78,7 @@
 //! # Parameter binding
 //!
 //! Queries can be composed by binding named parameters to them through the [bind] function.
-//! The function takes a string and a type implementing the [BindParamMap] trait.
+//! The function takes a string and a type implementing the [SQLParamMap] trait.
 //!
 //! ```
 //! use serde_json::json;
@@ -127,7 +127,7 @@ pub mod row;
 
 pub use crate::con_opts::ConOpts;
 pub use crate::connection::{connect, Connection};
-pub use crate::params::{bind, BindParam, BindParamMap};
+pub use crate::params::{bind, SQLParam, SQLParamMap};
 pub use crate::query::{PreparedStatement, QueryResult, ResultSet};
 pub use crate::response::{Column, DataType};
 pub use crate::row::{MapRow, Row, TryRowToType};
