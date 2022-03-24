@@ -145,7 +145,8 @@ impl Connection {
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let prepared_stmt: PreparedStatement = exa_con.prepare("SELECT 1 FROM (SELECT 1) TMP WHERE 1 = ?").unwrap();
-    /// prepared_stmt.execute(vec![vec![json!(1)]]).unwrap();
+    /// let data = vec![vec![json!(1)]];
+    /// prepared_stmt.execute(&data).unwrap();
     /// ```
     pub fn prepare<T>(&mut self, query: T) -> Result<PreparedStatement>
     where

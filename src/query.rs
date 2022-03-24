@@ -1,4 +1,5 @@
 use crate::connection::ConnectionImpl;
+use crate::constants::{DUMMY_COLUMNS_NUM, DUMMY_COLUMNS_VEC};
 use crate::error::{RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResultSetDe};
 use crate::response::{ParameterData, PreparedStatementDe};
@@ -267,16 +268,11 @@ impl PreparedStatement {
         }
     }
 
-    pub fn execute(&self, data: Vec<Vec<Value>>) -> Result<QueryResult> {
-        let dummy_num_cols = 0u8;
-        let dummy_cols_vec = vec![];
-
-        let (num_columns, columns) = self
-            .parameter_data
-            .as_ref()
-            .map_or((&dummy_num_cols, &dummy_cols_vec), |p| {
-                (&p.num_columns, &p.columns)
-            });
+    pub fn execute(&self, data: &[Vec<Value>]) -> Result<QueryResult> {
+        let (num_columns, columns) = match self.parameter_data.as_ref() {
+            Some(p) => (&p.num_columns, &p.columns),
+            None => (&DUMMY_COLUMNS_NUM, &DUMMY_COLUMNS_VEC),
+        };
 
         let payload = json!({
             "command": "executePreparedStatement",
