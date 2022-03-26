@@ -3,8 +3,8 @@
 #[allow(unused)]
 mod tests {
     use serde::de::{
-        DeserializeOwned, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess,
-        Unexpected, VariantAccess, Visitor,
+        DeserializeOwned, DeserializeSeed, EnumAccess, Error as SError, IntoDeserializer,
+        MapAccess, SeqAccess, Unexpected, VariantAccess, Visitor,
     };
     use std::borrow::{Borrow, BorrowMut, Cow};
     use std::cell::RefCell;
@@ -14,10 +14,15 @@ mod tests {
     use std::marker::PhantomData;
     use std::ops::Deref;
     use std::rc::Rc;
+    use std::vec::IntoIter;
     use std::{env, vec};
 
     use serde::__private::de::Content;
-    use serde::{forward_to_deserialize_any, serde_if_integer128, Deserialize, Serialize, Deserializer, Serializer};
+    use serde::{
+        forward_to_deserialize_any, serde_if_integer128, Deserialize, Deserializer, Serialize,
+        Serializer,
+    };
+    use serde_json::ser::{CompactFormatter, Compound};
     use serde_json::{de, from_value, json, Error, Map, Value};
 
     use exasol::error::Result;
@@ -474,11 +479,64 @@ mod tests {
             T::deserialize(row)
         }
 
+        fn deser<'de, D, F>(deserializer: D) -> std::result::Result<F, D::Error>
+        where
+            D: Deserializer<'de>,
+            F: Deserialize<'de>,
+        {
+            struct TupleVariantVisitor<F>(PhantomData<F>);
+
+            impl<'de, F> Visitor<'de> for TupleVariantVisitor<F>
+            where
+                F: Deserialize<'de>,
+            {
+                type Value = F;
+
+                fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+                    write!(formatter, "A map")
+                }
+
+                fn visit_map<A>(
+                    self,
+                    mut map: A,
+                ) -> std::result::Result<Self::Value, <A as MapAccess<'de>>::Error>
+                where
+                    A: MapAccess<'de>,
+                {
+                    let mut seq = vec![];
+                    while let Ok(opt) = map.next_entry() {
+                        if let Some(e) = opt {
+                            let _: String = e.0;
+                            seq.push(e.1)
+                        } else {
+                            break;
+                        }
+                    }
+                    let val = Value::Array(seq);
+                    Self::Value::deserialize(val.into_deserializer())
+                        .map_err(|_| A::Error::custom("blabla"))
+                }
+            }
+            deserializer.deserialize_map(TupleVariantVisitor(PhantomData))
+        }
+
+        use serde_json::Serializer;
+
+
+
         let columns = vec!["col1".to_owned(), "col2".to_owned()];
         let data = vec![
             Value::String("val1".to_owned()),
             Value::String("val2".to_owned()),
         ];
+
+        let col2 = vec!["col1".to_owned()];
+        let data2 = vec![Value::String("val1".to_owned())];
+
+        let row10 = Row {
+            columns: &col2,
+            data: data2,
+        };
 
         let row = Row {
             columns: &columns,
@@ -492,7 +550,7 @@ mod tests {
         let row6 = row.clone();
         let row7 = row.clone();
 
-        #[derive(Debug, Deserialize, Serialize)]
+        #[derive(Debug, Clone, Deserialize, Serialize)]
         struct A(String, String);
 
         #[derive(Debug, Deserialize, Serialize)]
@@ -504,19 +562,32 @@ mod tests {
         #[derive(Debug, Deserialize, Serialize)]
         struct H {
             #[serde(flatten)]
-            map: HashMap<String, Value>
+            map: HashMap<String, Value>,
         }
 
         #[derive(Debug, Deserialize, Serialize)]
         #[serde(tag = "col1")]
         enum C {
-            val1 {col2: String}
+            #[serde(rename = "val1")]
+            Val1 { col2: String },
         }
 
         #[derive(Debug, Deserialize, Serialize)]
         #[serde(untagged)]
         enum D {
-            C { col1: String, col2: String },
+            #[serde(deserialize_with = "deser")]
+            F(A),
+            // #[serde(deserialize_with = "deser")]
+            // A(Vec<String>),
+            // B(B),
+            // C { col1: String, col2: String },
+        }
+
+        #[derive(Debug, Deserialize, Serialize)]
+        #[serde(tag = "col1", rename_all = "lowercase")]
+        enum J {
+            Val1,
+            Val2,
         }
 
         let a: A = from_row(row).unwrap();
@@ -526,11 +597,17 @@ mod tests {
         let e: (String, String) = from_row(row5).unwrap();
         let f: Vec<String> = from_row(row6).unwrap();
         let h: H = from_row(row7).unwrap();
-        println!("{:?} {:?} {:?} {:?}, {:?}, {:?}, {:?}", a, b, c, d, e, f, h);
+        let j: J = from_row(row10).unwrap();
+
+        println!(
+            "{:?} {:?} {:?} {:?}, {:?}, {:?}, {:?}, {:?}",
+            a, b, c, d, e, f, h, j
+        );
 
         println!("{}", serde_json::to_string(&a).unwrap());
         println!("{}", serde_json::to_string(&b).unwrap());
         println!("{}", serde_json::to_string(&c).unwrap());
         println!("{}", serde_json::to_string(&d).unwrap());
+        println!("{}", serde_json::to_string(&j).unwrap());
     }
 }

@@ -3,7 +3,8 @@ use crate::constants::{DUMMY_COLUMNS_NUM, DUMMY_COLUMNS_VEC};
 use crate::error::{RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResultSetDe};
 use crate::response::{ParameterData, PreparedStatementDe};
-use crate::row::{Row, RowType};
+use crate::row::{transpose_data, Row, RowType};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
@@ -268,19 +269,26 @@ impl PreparedStatement {
         }
     }
 
-    pub fn execute(&self, data: &[Vec<Value>]) -> Result<QueryResult> {
+    pub fn execute<T, S>(&self, data: T) -> Result<QueryResult>
+    where
+        S: Serialize,
+        T: IntoIterator<Item = S>,
+    {
         let (num_columns, columns) = match self.parameter_data.as_ref() {
             Some(p) => (&p.num_columns, &p.columns),
             None => (&DUMMY_COLUMNS_NUM, &DUMMY_COLUMNS_VEC),
         };
 
+        let col_names = columns.iter().map(|c| &c.name).collect::<Vec<&String>>();
+        let col_major_data = transpose_data(&col_names, data)?;
+
         let payload = json!({
             "command": "executePreparedStatement",
             "statementHandle": &self.statement_handle,
             "numColumns": num_columns,
-            "numRows": data.len(),
+            "numRows": col_major_data.len(),
             "columns": columns,
-            "data": data
+            "data": col_major_data
         });
 
         self.connection
@@ -288,7 +296,7 @@ impl PreparedStatement {
             .exec_and_get_first(&self.connection, payload)
     }
 
-    fn close(&mut self) -> Result<()> {
+    pub fn close(&mut self) -> Result<()> {
         (*self.connection)
             .borrow_mut()
             .close_prepared_stmt(self.statement_handle)
