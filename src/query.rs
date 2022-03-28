@@ -3,7 +3,8 @@ use crate::constants::{DUMMY_COLUMNS_NUM, DUMMY_COLUMNS_VEC};
 use crate::error::{RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResultSetDe};
 use crate::response::{ParameterData, PreparedStatementDe};
-use crate::row::{transpose_data, Row, RowType};
+use crate::row::{transpose_data, Row};
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -74,7 +75,7 @@ impl QueryResult {
 /// based on the `fetch_size` parameter set in the [ConOpts](crate::ConOpts) used when constructing
 /// the [Connection](crate::Connection), until the result set is entirely read.
 #[allow(unused)]
-pub struct ResultSet<T: RowType = Row> {
+pub struct ResultSet<T: DeserializeOwned = Vec<Value>> {
     num_columns: u8,
     total_rows_num: u32,
     total_rows_pos: u32,
@@ -85,12 +86,12 @@ pub struct ResultSet<T: RowType = Row> {
     data_iter: IntoIter<Vec<Value>>,
     connection: Rc<RefCell<ConnectionImpl>>,
     is_closed: bool,
-    row_type: PhantomData<T>,
+    row_type: PhantomData<*const T>,
 }
 
 impl<T> Debug for ResultSet<T>
 where
-    T: RowType,
+    T: DeserializeOwned,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -103,7 +104,7 @@ where
 
 impl<T> ResultSet<T>
 where
-    T: RowType,
+    T: DeserializeOwned,
 {
     /// Returns a reference to a [Vec<Column>] of the result set columns.
     pub fn columns(&self) -> &Vec<Column> {
@@ -120,9 +121,9 @@ where
         &self.total_rows_num
     }
 
-    pub fn with_row_type<U>(mut self) -> ResultSet<U>
+    pub fn row_type<R>(mut self) -> ResultSet<R>
     where
-        U: RowType,
+        R: DeserializeOwned,
     {
         ResultSet {
             num_columns: self.num_columns,
@@ -131,7 +132,7 @@ where
             chunk_rows_num: self.chunk_rows_num,
             chunk_rows_pos: self.chunk_rows_pos,
             result_set_handle: self.result_set_handle,
-            columns: std::mem::replace(&mut self.columns, vec![]),
+            columns: std::mem::take(&mut self.columns),
             data_iter: std::mem::replace(&mut self.data_iter, vec![].into_iter()),
             connection: Rc::clone(&self.connection),
             is_closed: self.is_closed,
@@ -156,8 +157,10 @@ where
         }
     }
 
-    fn next_row(&mut self) -> Option<Result<Vec<Value>>> {
-        self.data_iter.next().map(|r| Ok(r))
+    fn next_row(&mut self) -> Option<Result<T>> {
+        self.data_iter
+            .next()
+            .map(|r| Ok(T::deserialize(Row::new(r, &self.columns))?))
     }
 
     /// Closes the result set if it wasn't already closed
@@ -209,11 +212,11 @@ where
 /// Making [ResultSet] an iterator
 impl<T> Iterator for ResultSet<T>
 where
-    T: RowType,
+    T: DeserializeOwned,
 {
     type Item = Result<T>;
 
-    fn next(&mut self) -> Option<Result<T>> {
+    fn next(&mut self) -> Option<Self::Item> {
         let row = self.next_row().or_else(|| {
             // All rows retrieved
             if self.total_rows_pos >= self.total_rows_num {
@@ -234,15 +237,13 @@ where
 
         // If row is None, all rows were iterated
         // so we're closing the result set, propagating the error, if any
-        // We're also converting the Vec<Value> base row to our Row type before returning it
-        row.map(|r| r.map(|v| T::build(v, &self.columns)))
-            .or_else(|| self.close().map_or_else(|e| Some(Err(e)), |_| None))
+        row.or_else(|| self.close().map_or_else(|e| Some(Err(e)), |_| None))
     }
 }
 
 impl<T> Drop for ResultSet<T>
 where
-    T: RowType,
+    T: DeserializeOwned,
 {
     fn drop(&mut self) {
         self.close().ok();
@@ -279,7 +280,10 @@ impl PreparedStatement {
             None => (&DUMMY_COLUMNS_NUM, &DUMMY_COLUMNS_VEC),
         };
 
-        let col_names = columns.iter().map(|c| &c.name).collect::<Vec<&String>>();
+        let col_names = columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<&str>>();
         let col_major_data = transpose_data(&col_names, data)?;
 
         let payload = json!({
