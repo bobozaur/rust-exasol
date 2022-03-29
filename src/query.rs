@@ -121,6 +121,61 @@ where
         &self.total_rows_num
     }
 
+    /// Method that consumes self to return a new [ResultSet]
+    /// that deserializes rows to the given Rust type.
+    ///
+    /// This method does not take any arguments,
+    /// it's merely a means for changing the generic row type.
+    ///
+    /// ```
+    /// # use serde_json::json;
+    /// # use exasol::*;
+    /// # use exasol::error::Result;
+    ///
+    /// # let json_data = json!(
+    ///	#	{
+    ///	#	   "columns":[
+    ///	#	      {
+    ///	#	         "dataType":{
+    ///	#	            "size":10,
+    ///	#	            "type":"VARCHAR"
+    ///	#	         },
+    ///	#	         "name":"col1"
+    ///	#	      },
+    ///	#	      {
+    ///	#	         "dataType":{
+    ///	#	            "size":10,
+    ///	#	            "type":"VARCHAR"
+    ///	#	         },
+    ///	#	         "name":"col2"
+    ///	#	      }
+    ///	#	   ],
+    ///	#	   "data":[
+    ///	#	      [
+    ///	#	         "val1", "val3"
+    ///	#	      ],
+    ///	#	      [
+    ///	#	         "val2", "val4"
+    ///	#	      ]
+    ///	#	   ],
+    ///	#	   "numColumns":2,
+    ///	#	   "numRows":2,
+    ///	#	   "numRowsInMessage":2
+    ///	#	}
+    /// #   );
+    /// #
+    /// #   let result_set: ResultSetDe = serde_json::from_value(json_data).unwrap();
+    ///
+    /// // Get a result set from the database
+    /// // and change the expected row type with the turbofish notation
+    /// result_set = result_set.with_row_type::<(String, String)>();
+    /// let row1 = result_set.next();
+    ///
+    /// // Nothing stops you from changing row types
+    /// // on the same result set, even while iterating through it
+    /// result_set = result_set.with_row_type::<Vec<String>>();
+    /// let row2 = result_set.next();
+    /// ```
     pub fn with_row_type<R>(mut self) -> ResultSet<R>
     where
         R: DeserializeOwned,
