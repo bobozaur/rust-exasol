@@ -513,9 +513,8 @@ impl ConnectionImpl {
         let payload = json!({"command": "login", "protocolVersion": protocol_version});
 
         let pem = self
-            .do_request(payload)?
-            .and_then(|p| p.to_public_key())
-            .ok_or(NO_PUBLIC_KEY)?;
+            .get_resp_data(payload)?
+            .and_then(|p| p.try_to_public_key_string());
 
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)?)
     }

@@ -1,17 +1,32 @@
 # exasol
-A synchronous database connector for Exasol written in Rust.
+A synchronous database connector for Exasol written in Rust, based on the Exasol [Websocket API](https://github.com/exasol/websocket-api).
+Inspired by [Py-Exasol](https://github.com/exasol/pyexasol).
 
 Please find the documentation [here](https://docs.rs/exasol/latest/exasol/).
 
 Features available:
  - DSN parsing and resolving
- - Single and multi query execution
+ - Single and batch query execution
+ - Prepared statements
+ - WSS support through native-tls and rustls
+ - Row deserialization into Rust types
  - Named parameter binding
  - Autocommit is enabled by default. Disabling it results in transactional mode being enabled, which requires explicit "COMMIT" or "ROLLBACK" statements to be executed.
 
 Features planned for future versions:
-  - Prepared statements support
   - Performant IMPORT/EXPORT functionalities
   - Performant parallel IMPORT/EXPORT
-  - WSS suppport through SSL
   - Compression support
+
+##Crate Features:
+* native-tls - (disabled by default) enables `tungstenite`'s WSS support through `native-tls`
+* rustls - (disabled by default) enables `tungstenite`'s WSS support through `rustls`
+
+
+##License
+Licensed under either of
+
+* Apache License, Version 2.0, (LICENSE-APACHE or https://www.apache.org/licenses/LICENSE-2.0)
+* MIT license (LICENSE-MIT or https://opensource.org/licenses/MIT)
+
+at your option.

@@ -5,7 +5,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 use crate::con_opts::ProtocolVersion;
-use crate::constants::{MISSING_DATA, NO_RESPONSE_DATA};
+use crate::constants::{MISSING_DATA, NO_PUBLIC_KEY, NO_RESPONSE_DATA};
 use crate::error::Result;
 use serde::de::{DeserializeSeed, Error, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -85,14 +85,24 @@ impl ResponseData {
         }
     }
 
-    /// Returns [Option<String>] with `Some(Key)` if conversion works
-    /// or `None` if it does not.
-    pub(crate) fn to_public_key(self) -> Option<String> {
+    /// Attempts to convert this struct to a [String] representing the public key.
+    pub(crate) fn try_to_public_key_string(self) -> Result<String> {
         match self {
-            Self::PublicKey(p) => Some(p.into_string_key()),
-            _ => None,
+            Self::PublicKey(p) => Ok(p.into()),
+            _ => Err(NO_PUBLIC_KEY.into()),
         }
     }
+}
+
+#[test]
+#[allow(unused)]
+fn deserialize_error() {
+    let result = json!(
+        {
+            "code": "123",
+            "text": "Test"
+        }
+    );
 }
 
 /// Generic struct containing the response fields
@@ -115,34 +125,36 @@ impl std::error::Error for ExaError {}
 #[test]
 #[allow(unused)]
 fn deserialize_results() {
-    let result = json!({
-       "numResults":1,
-       "results":[
-          {
-     "resultSet":{
-        "columns":[
-           {
-              "dataType":{
-                 "precision":1,
-                 "scale":0,
-                 "type":"DECIMAL"
-              },
-              "name":"1"
-           }
-        ],
-        "data":[
-           [
-              1
-           ]
-        ],
-        "numColumns":1,
-        "numRows":1,
-        "numRowsInMessage":1
-     },
-     "resultType":"resultSet"
-          }
-       ]
-    });
+    let result = json!(
+		{
+		   "numResults":1,
+		   "results":[
+		      {
+		         "resultSet":{
+		            "columns":[
+		               {
+		                  "dataType":{
+		                     "precision":1,
+		                     "scale":0,
+		                     "type":"DECIMAL"
+		                  },
+		                  "name":"1"
+		               }
+		            ],
+		            "data":[
+		               [
+		                  1
+		               ]
+		            ],
+		            "numColumns":1,
+		            "numRows":1,
+		            "numRowsInMessage":1
+		         },
+		         "resultType":"resultSet"
+		      }
+		   ]
+		}
+    );
     let de: Results = serde_json::from_value(result).unwrap();
 }
 
@@ -196,35 +208,24 @@ pub(crate) struct FetchedData {
 #[test]
 #[allow(unused)]
 fn deserialize_prepared() {
-    let result = json!({
-        "statementHandle": 1,
-       "numResults":1,
-       "results":[
-          {
-     "resultSet":{
-        "columns":[
-           {
-              "dataType":{
-                 "precision":1,
-                 "scale":0,
-                 "type":"DECIMAL"
-              },
-              "name":"1"
-           }
-        ],
-        "data":[
-           [
-              1
-           ]
-        ],
-        "numColumns":1,
-        "numRows":1,
-        "numRowsInMessage":1
-     },
-     "resultType":"resultSet"
-          }
-       ]
-    });
+    let result = json!(
+		{
+		   "statementHandle":1,
+		   "parameterData":{
+		      "numColumns":10,
+		      "columns":[
+		         {
+		            "dataType":{
+		               "precision":1,
+		               "scale":0,
+		               "type":"DECIMAL"
+		            },
+		            "name":"1"
+		         }
+		      ]
+		   }
+		}
+    );
     let de: PreparedStatementDe = serde_json::from_value(result).unwrap();
 }
 
@@ -236,11 +237,47 @@ pub(crate) struct PreparedStatementDe {
     pub(crate) parameter_data: Option<ParameterData>,
 }
 
+#[test]
+#[allow(unused)]
+fn deser_param_data() {
+    let json_data = json!(
+		{
+		   "numColumns":10,
+		   "columns":[
+		      {
+		         "dataType":{
+		            "precision":1,
+		            "scale":0,
+		            "type":"DECIMAL"
+		         },
+		         "name":"1"
+		      }
+		   ]
+		}
+    );
+
+    let x: Attributes = serde_json::from_value(json_data).unwrap();
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParameterData {
     pub num_columns: u8,
     pub columns: Vec<Column>,
+}
+
+#[test]
+#[allow(unused)]
+fn deser_attributes() {
+    let json_data = json!(
+        {
+            "key1": "val1",
+            "key2": "val2",
+            "key3": "val3"
+        }
+    );
+
+    let x: Attributes = serde_json::from_value(json_data).unwrap();
 }
 
 /// Struct representing attributes returned from Exasol.
@@ -251,6 +288,22 @@ pub struct ParameterData {
 pub(crate) struct Attributes {
     #[serde(flatten)]
     pub(crate) map: HashMap<String, Value>,
+}
+
+#[test]
+#[allow(unused)]
+fn deser_login_info() {
+    use crate::con_opts::ProtocolVersion;
+
+    let json_data = json!(
+        {
+            "protocolVersion": ProtocolVersion::V3,
+            "key1": "val1",
+            "key2": "val2"
+        }
+    );
+
+    let x: LoginInfo = serde_json::from_value(json_data).unwrap();
 }
 
 /// Struct representing database information returned
@@ -264,6 +317,20 @@ pub(crate) struct LoginInfo {
     map: HashMap<String, Value>,
 }
 
+#[test]
+#[allow(unused)]
+fn deser_public_key() {
+    let json_data = json!(
+		{
+		   "publicKeyExponent":"test1",
+		   "publicKeyModulus":"test2",
+		   "publicKeyPem":"test3"
+		}
+    );
+
+    let x: PublicKey = serde_json::from_value(json_data).unwrap();
+}
+
 /// Struct representing public key information
 /// returned as part of the login process.
 #[allow(unused)]
@@ -275,38 +342,40 @@ pub(crate) struct PublicKey {
     public_key_pem: String,
 }
 
-impl PublicKey {
-    pub(crate) fn into_string_key(self) -> String {
-        self.public_key_pem
+impl From<PublicKey> for String {
+    fn from(pub_key: PublicKey) -> Self {
+        pub_key.public_key_pem
     }
 }
 
 #[test]
 #[allow(unused)]
 fn deser_query_result1() {
-    let json_data = json!({
-    "resultSet":{
-       "columns":[
-          {
-             "dataType":{
-                "precision":1,
-                "scale":0,
-                "type":"DECIMAL"
-             },
-             "name":"1"
-          }
-       ],
-       "data":[
-          [
-             1
-          ]
-       ],
-       "numColumns":1,
-       "numRows":1,
-       "numRowsInMessage":1
-    },
-    "resultType":"resultSet"
-         });
+    let json_data = json!(
+		{
+		   "resultSet":{
+		      "columns":[
+		         {
+		            "dataType":{
+		               "precision":1,
+		               "scale":0,
+		               "type":"DECIMAL"
+		            },
+		            "name":"1"
+		         }
+		      ],
+		      "data":[
+		         [
+		            1
+		         ]
+		      ],
+		      "numColumns":1,
+		      "numRows":1,
+		      "numRowsInMessage":1
+		   },
+		   "resultType":"resultSet"
+		}
+    );
 
     let de: QueryResultDe = serde_json::from_value(json_data).unwrap();
 }
@@ -315,10 +384,11 @@ fn deser_query_result1() {
 #[allow(unused)]
 fn deser_query_result2() {
     let json_data = json!(
-    {
-        "resultType": "rowCount",
-        "rowCount": 0
-    });
+        {
+            "resultType": "rowCount",
+            "rowCount": 0
+        }
+    );
 
     let de: QueryResultDe = serde_json::from_value(json_data).unwrap();
 }
@@ -340,26 +410,27 @@ pub(crate) enum QueryResultDe {
 #[allow(unused)]
 fn deser_result_set() {
     let json_data = json!(
-       {
-       "columns":[
-          {
-             "dataType":{
-                "precision":1,
-                "scale":0,
-                "type":"DECIMAL"
-             },
-             "name":"1"
-          }
-       ],
-       "data":[
-          [
-             1
-          ]
-       ],
-       "numColumns":1,
-       "numRows":1,
-       "numRowsInMessage":1
-    });
+		{
+		   "columns":[
+		      {
+		         "dataType":{
+		            "precision":1,
+		            "scale":0,
+		            "type":"DECIMAL"
+		         },
+		         "name":"1"
+		      }
+		   ],
+		   "data":[
+		      [
+		         1
+		      ]
+		   ],
+		   "numColumns":1,
+		   "numRows":1,
+		   "numRowsInMessage":1
+		}
+    );
 
     let de: ResultSetDe = serde_json::from_value(json_data).unwrap();
 }
@@ -383,34 +454,17 @@ pub(crate) struct ResultSetDe {
 #[allow(unused)]
 fn deser_column() {
     let json_data = json!(
-    {
-          "dataType":{
-             "precision":1,
-             "scale":0,
-             "type":"DECIMAL"
-          },
-          "name":"1"
-    }
+		{
+		   "dataType":{
+		      "precision":1,
+		      "scale":0,
+		      "type":"DECIMAL"
+		   },
+		   "name":"1"
+		}
     );
 
     let de: Column = serde_json::from_value(json_data).unwrap();
-}
-
-#[test]
-#[allow(unused)]
-fn deser_columns() {
-    let json_data = json!([
-    {
-          "dataType":{
-             "precision":1,
-             "scale":0,
-             "type":"DECIMAL"
-          },
-          "name":"1"
-    }]
-    );
-
-    let de: Vec<Column> = serde_json::from_value(json_data).unwrap();
 }
 
 /// Struct containing the name and datatype (as seen in Exasol) of a given column.
@@ -426,6 +480,20 @@ impl Display for Column {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.name, self.datatype)
     }
+}
+
+#[test]
+#[allow(unused)]
+fn deser_datatype() {
+    let json_data = json!(
+		{
+		   "precision":1,
+		   "scale":0,
+		   "type":"DECIMAL"
+		}
+    );
+
+    let de: DataType = serde_json::from_value(json_data).unwrap();
 }
 
 /// Struct representing a datatype for a column in a result set.
@@ -450,8 +518,18 @@ impl Display for DataType {
     }
 }
 
+#[test]
+fn deser_to_row_major(){
+    let json_data = json!([[1, 2, 3], [1, 2, 3]]);
+    let row_major_data = to_row_major(json_data).unwrap();
+    assert!(row_major_data, vec![vec![1, 1],  vec![2, 2], vec![3, 3]]);
+}
 /// Deserialization function used to turn Exasol's
 /// column major data into row major format during deserialization.
+///
+/// Two different structs and visitors are used for transposing the data
+/// because the first column visitor will create a Vec for each row
+/// while the other column visitor will simply append values to each of these Vec instances
 fn to_row_major<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Vec<Vec<Value>>, D::Error> {
