@@ -79,8 +79,9 @@ impl Connection {
     /// Returns a [QueryResult]
     ///
     /// ```
-    /// # use exasol::{connect, Row, QueryResult};
+    /// # use exasol::{connect, QueryResult};
     /// # use exasol::error::Result;
+    /// # use serde_json::Value;
     /// # use std::env;
     ///
     /// # let dsn = env::var("EXA_DSN").unwrap();
@@ -88,10 +89,10 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result = exa_con.execute("SELECT * FROM EXA_ALL_OBJECTS LIMIT 2000;").unwrap();
+    /// let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
     ///
     /// if let QueryResult::ResultSet(r) = result {
-    ///     let x = r.take(50).collect::<Result<Vec<Row>>>();
+    ///     let x = r.collect::<Result<Vec<Vec<Value>>>>();
     ///         if let Ok(v) = x {
     ///             for row in v.iter() {
     ///                 // do stuff
@@ -155,7 +156,7 @@ impl Connection {
         (*self.con).borrow_mut().prepare(&self.con, &query)
     }
 
-    /// Ping the server and wait for Pong frame
+    /// Ping the server and wait for a Pong frame
     ///
     /// ```
     /// # use exasol::connect;
@@ -211,7 +212,7 @@ impl Connection {
         self.set_attributes(payload)
     }
 
-    /// Sets the fetch size in bytes when retrieving [crate::ResultSet] chunks
+    /// Sets the fetch size in bytes when retrieving [ResultSet] chunks
     ///
     /// ```
     /// # use exasol::connect;
@@ -261,8 +262,9 @@ impl Connection {
 
 /// Connection implementation.
 /// This requires a wrapper so that the interior mutability pattern can be used
-/// for sharing the connection in multiple ResultSet structs.
-/// They need to own it so that they can use it to further fetch data when iterated.
+/// for sharing the connection in multiple [ResultSet] and [PreparedStatement] structs.
+/// They need to own it so that they can use it to further interact with the database
+/// for row fetching or query execution.
 #[doc(hidden)]
 pub(crate) struct ConnectionImpl {
     attr: HashMap<String, Value>,
@@ -349,7 +351,7 @@ impl ConnectionImpl {
         return Ok(con);
     }
 
-    /// Sends the setAttributes request
+    /// Sends an setAttributes request to Exasol
     /// And calls get_attributes for consistency
     pub(crate) fn set_con_attr(&mut self, attrs: Value) -> Result<()> {
         let payload = json!({"command": "setAttributes", "attributes": attrs});
@@ -454,10 +456,12 @@ impl ConnectionImpl {
         Ok(data)
     }
 
+    /// Gets an attribute from the internal map
     pub(crate) fn get_attr(&mut self, attr_name: &str) -> Option<&Value> {
         self.attr.get(attr_name)
     }
 
+    /// Stores an attribute in the internal map
     pub(crate) fn set_attr(&mut self, attr_name: String, val: Value) {
         self.attr.insert(attr_name, val);
     }

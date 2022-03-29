@@ -77,7 +77,7 @@ mod tests {
         }
 
         if let QueryResult::ResultSet(r) = result {
-            for row in r.row_type::<Test>() {
+            for row in r.with_row_type::<Test>() {
                 let x = row.unwrap();
                 println!("{:?}", x);
             }

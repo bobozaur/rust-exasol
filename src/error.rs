@@ -1,7 +1,7 @@
 use crate::response::{Attributes, ExaError, Response, ResponseData};
 use rsa;
 use serde_json;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Display, Formatter, write};
 use std::num::ParseIntError;
 use tungstenite;
 use url;
@@ -24,6 +24,7 @@ impl From<Response> for Result<(Option<ResponseData>, Option<Attributes>)> {
 /// Error type for Exasol
 #[derive(Debug)]
 pub enum Error {
+    DataError(String),
     BindError(String),
     ConnectionError(ConnectionError),
     RequestError(RequestError),
@@ -46,6 +47,7 @@ impl std::error::Error for Error {}
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::DataError(e) => write!(f, "{}", e),
             Self::BindError(e) => write!(f, "{}", e),
             Self::ConnectionError(e) => write!(f, "{}", e),
             Self::RequestError(e) => write!(f, "{}", e),
@@ -62,7 +64,7 @@ impl From<&'static str> for Error {
 
 impl From<String> for Error {
     fn from(e: String) -> Self {
-        Self::BindError(e)
+        Self::DataError(e)
     }
 }
 

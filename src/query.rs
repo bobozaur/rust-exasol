@@ -3,7 +3,7 @@ use crate::constants::{DUMMY_COLUMNS_NUM, DUMMY_COLUMNS_VEC};
 use crate::error::{RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResultSetDe};
 use crate::response::{ParameterData, PreparedStatementDe};
-use crate::row::{transpose_data, Row};
+use crate::row::{to_col_major, Row};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -121,7 +121,7 @@ where
         &self.total_rows_num
     }
 
-    pub fn row_type<R>(mut self) -> ResultSet<R>
+    pub fn with_row_type<R>(mut self) -> ResultSet<R>
     where
         R: DeserializeOwned,
     {
@@ -284,7 +284,7 @@ impl PreparedStatement {
             .iter()
             .map(|c| c.name.as_str())
             .collect::<Vec<&str>>();
-        let col_major_data = transpose_data(&col_names, data)?;
+        let col_major_data = to_col_major(&col_names, data)?;
 
         let payload = json!({
             "command": "executePreparedStatement",

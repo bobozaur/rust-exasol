@@ -4,13 +4,103 @@ use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, V
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
 use serde_json::{Error as SJError, Value};
 use std::borrow::{Borrow, Cow};
-use std::fmt::Formatter;
+use std::collections::HashMap;
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::vec::IntoIter;
+use crate::DataType;
 
-#[derive(Clone, Debug)]
-pub struct Row<'a> {
+#[test]
+fn deser_row(){
+    use serde_json::json;
+
+    let json_data = json!([
+		{
+		   "dataType":{
+		      "size": 10,
+		      "type":"VARCHAR"
+		   },
+		   "name":"col1"
+		},
+        {
+		   "dataType":{
+		      "size": 10,
+		      "type":"VARCHAR"
+		   },
+		   "name":"col2"
+		}
+    ]
+    );
+
+    let columns = serde_json::from_value(json_data).unwrap();
+
+    let data = json!(["val1", "val2"]);
+    let data1 = data.as_array().unwrap().clone();
+    let data2 = data.as_array().unwrap().clone();
+    let data3 = data.as_array().unwrap().clone();
+    let data4 = data.as_array().unwrap().clone();
+    let data5 = data.as_array().unwrap().clone();
+
+    let row1 = Row::new(data1, &columns);
+    let row2 = Row::new(data2, &columns);
+    let row3 = Row::new(data3, &columns);
+    let row4 = Row::new(data4, &columns);
+    let row5 = Row::new(data5, &columns);
+
+    #[derive(Deserialize)]
+    struct SomeRow1(String, String);
+
+    #[derive(Deserialize)]
+    struct SomeRow2{
+        col1: String,
+        col2: String
+    }
+
+    #[derive(Deserialize)]
+    struct SomeRow3 {
+        #[serde(flatten)]
+        map: HashMap<String, Value>
+    }
+
+    // Row variant can be chosen through internal tagging
+    #[derive(Deserialize)]
+    #[serde(tag = "col1", rename_all = "camelCase")]
+    enum SomeRow4 {
+        Val2(String),
+        Val1(String)
+    }
+
+    // Untagged deserialization can also be employed
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum SomeRow5 {
+        // This variant won't be chosen due to data type,
+        // but struct variants are perfectly fine, they just need
+        // the custom deserialization mechanism
+        #[serde(deserialize_with = "deserialize_as_seq")]
+        SomeVar1(u8, u8),
+        // commenting the line below results in an error when trying to
+        // deserialize this variant, so the third variant will be attempted
+        #[serde(deserialize_with = "deserialize_as_seq")]
+        SomeVar2(SomeRow1),
+        // Struct variants are map-like, so they can be deserialized right away
+        SomeVar3{col1: String, col2: String},
+        // And so can variants of a struct type, but the one above has order precedence
+        SomeVar4(SomeRow2)
+    }
+
+    SomeRow1::deserialize(row1).unwrap();
+    SomeRow2::deserialize(row2).unwrap();
+    SomeRow3::deserialize(row3).unwrap();
+    SomeRow4::deserialize(row4).unwrap();
+    SomeRow5::deserialize(row5).unwrap();
+}
+
+/// Struct representing a result set row.
+/// This is only used internally to further deserialize it into a given Rust type.
+#[derive(Debug)]
+pub(crate) struct Row<'a> {
     columns: &'a Vec<Column>,
     data: Vec<Value>,
 }
@@ -27,6 +117,12 @@ impl<'a> From<Row<'a>> for Value {
     }
 }
 
+/// Implements custom deserialization for [Row] because we own the data but borrow the columns.
+/// Furthermore, we want to be able to deserialize it to whatever the user wants,
+/// be it a sequence or map like type.
+///
+/// It can thus be said that we implement a non-descriptive deserialization mechanism.
+/// Most of the implementation is a trimmed down version of the protocol in `serde_json`.
 impl<'de> serde::de::Deserializer<'de> for Row<'de> {
     serde::forward_to_deserialize_any! {
         bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string
@@ -229,6 +325,217 @@ impl<'de> serde::de::Deserializer<'de> for BorrowedCowStrDeserializer<'de> {
     }
 }
 
+#[test]
+fn col_major_seq_data() {
+    #[derive(Clone, Serialize)]
+    struct SomeRow(String, String);
+
+    let row = SomeRow("val1".to_owned(), "val2".to_owned());
+    let row_major_data = vec![row.clone(), row.clone()];
+
+    let columns = &["col1", "col2"];
+    let col_major_data = to_col_major(columns, row_major_data);
+    assert!(
+        col_major_data,
+        vec![
+            vec!["val1".to_owned(), "val1".to_owned()],
+            vec!["val2".to_owned(), "val2".to_owned()]
+        ]
+    )
+}
+
+#[test]
+fn col_major_map_data() {
+    #[derive(Clone, Serialize)]
+    struct SomeRow {
+        col1: String,
+        col2: String,
+    }
+
+    let row = SomeRow {
+        col1: "val1".to_owned(),
+        col2: "val2".to_owned(),
+    };
+
+    let row_major_data = vec![row.clone(), row.clone()];
+
+    let columns = &["col2", "col1"];
+    let col_major_data = to_col_major(columns, row_major_data);
+    assert!(
+        col_major_data,
+        vec![
+            vec!["val2".to_owned(), "val2".to_owned()],
+            vec!["val1".to_owned(), "val1".to_owned()]
+        ]
+    )
+}
+
+/// Function used to transpose data from an iterator or serializable types,
+/// which would represent a row-major data record, to column-major data.
+/// This data is then ready to be JSON serialized and sent to Exasol.
+///
+/// Sequence-like data is processed as such, and the columns are merely used to assert length.
+/// Map-like data though requires columns so the data is processed in the expected order.
+pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> Result<Vec<Vec<Value>>>
+where
+    S: Serialize,
+    C: ?Sized + Hash + Ord,
+    String: Borrow<C>,
+    T: IntoIterator<Item = S>,
+{
+    let iter_data = data
+        .into_iter()
+        .map(|s| to_seq_iter(s, columns).map(IntoIterator::into_iter))
+        .collect::<Result<Vec<IntoIter<Value>>>>()?;
+    Ok(ColumnMajorIterator(iter_data).collect::<Vec<Vec<Value>>>())
+}
+
+fn to_seq_iter<C, S>(data: S, columns: &[&C]) -> Result<Vec<Value>>
+where
+    S: Serialize,
+    C: ?Sized + Hash + Ord + Display,
+    String: Borrow<C>,
+{
+    let val = serde_json::to_value(data)?;
+
+    match val {
+        Value::Object(mut o) => columns
+            .iter()
+            .map(|c| {
+                o.remove(c)
+                    .ok_or(Error::DataError(format!("Data is missing column {}", c)))
+            })
+            .collect(),
+        Value::Array(a) => {
+            let num_cols = columns.len();
+
+            if num_cols > a.len() {
+                Err(Error::DataError("Not enough columns in data!".to_owned()))
+            } else {
+                Ok(a.into_iter().take(num_cols).collect())
+            }
+        }
+        _ => Err(Error::DataError(
+            "Data iterator items must deserialize to sequences or maps".to_owned(),
+        )),
+    }
+}
+
+struct ColumnMajorIterator(Vec<IntoIter<Value>>);
+
+impl Iterator for ColumnMajorIterator {
+    type Item = Vec<Value>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0
+            .iter_mut()
+            .map(|iter| iter.next())
+            .collect::<Option<Vec<Value>>>()
+            .and_then(|r| if r.is_empty() { None } else { Some(r) })
+    }
+}
+
+/// Deserialization function that can be used through the `serde(deserialize_with = "...")`
+/// attribute to aid in deserialization of enum variants as sequences instead of maps.
+///
+/// Due to the non-descriptive nature of a Row, which can be deserialized into
+/// either sequences or maps, the default behaviour is to deserialize them as maps.
+///
+/// In the case of enum variants, the default behaviour is always employed. Changing
+/// this has to be done by changing the deserialization mechanism itself, which
+/// this function does.
+///
+/// ```
+/// # use serde_json::json;
+/// # use exasol::*;
+/// # use exasol::error::Result;
+///
+/// # let json_data = json!(
+///	#	{
+///	#	   "columns":[
+///	#	      {
+///	#	         "dataType":{
+///	#	            "size":10,
+///	#	            "type":"VARCHAR"
+///	#	         },
+///	#	         "name":"col1"
+///	#	      },
+///	#	      {
+///	#	         "dataType":{
+///	#	            "size":10,
+///	#	            "type":"VARCHAR"
+///	#	         },
+///	#	         "name":"col2"
+///	#	      }
+///	#	   ],
+///	#	   "data":[
+///	#	      [
+///	#	         "val1", "val3"
+///	#	      ],
+///	#	      [
+///	#	         "val2", "val4"
+///	#	      ]
+///	#	   ],
+///	#	   "numColumns":2,
+///	#	   "numRows":2,
+///	#	   "numRowsInMessage":2
+///	#	}
+/// #   );
+/// #
+/// #   let result_set1: ResultSetDe = serde_json::from_value(json_data.clone()).unwrap();
+/// #   let result_set2: ResultSetDe = serde_json::from_value(json_data.clone()).unwrap();
+/// #   let result_set3: ResultSetDe = serde_json::from_value(json_data).unwrap();
+///
+///
+///    // Default serde behaviour, which is external tagging, is not supported
+///    // and it doesn't even make sense in the context of a database row.
+///    #[derive(Deserialize)]
+///    #[serde(rename_all = "camelCase")]
+///    enum Val1 {
+///        Val2(String)
+///    }
+///
+///    // Row variant can be chosen through internal tagging
+///    #[derive(Deserialize)]
+///    #[serde(tag = "col1", rename_all = "camelCase")]
+///    enum SomeRow2 {
+///        Val2(String),
+///        Val1(String)
+///    }
+///
+///    // Untagged deserialization can also be employed
+///    #[derive(Deserialize)]
+///    #[serde(untagged)]
+///    enum SomeRow3 {
+///        // This variant won't be chosen due to data type,
+///        // but struct variants are perfectly fine, they just need
+///        // the custom deserialization mechanism
+///        #[serde(deserialize_with = "deserialize_as_seq")]
+///        SomeVar1(u8, u8),
+///        // commenting the line below results in an error when trying to
+///        // deserialize this variant, so the third variant will be attempted
+///        #[serde(deserialize_with = "deserialize_as_seq")]
+///        SomeVar2(SomeRow1),
+///        // Struct variants are map-like, so they can be deserialized right away
+///        SomeVar3{col1: String, col2: String},
+///        // And so can variants of a struct type, but the one above has order precedence
+///        SomeVar4(SomeRow2)
+///    }
+///
+/// // We get some results from the database
+/// // and set the row types we want to deserialize them to.
+/// result_set1 = result_set1.with_row_type::<Val1>();
+/// result_set2 = result_set2.with_row_type::<SomeRow2>();
+/// result_set3 = result_set2.with_row_type::<SomeRow3>();
+///
+/// // Due to the unsupported external tagging deserialization
+/// // this will error out
+/// let rows1: Result<Vec<Val1>> = result_set1.collect();
+/// // But internal tagging works
+/// let rows2: Result<Vec<SomeRow2>> = result_set2.collect().unwrap();
+/// // And so does untagged deserialization
+/// let rows3: Result<Vec<SomeRow3>> = result_set3.collect().unwrap();
+/// ```
 pub fn deserialize_as_seq<'de, D, F>(deserializer: D) -> std::result::Result<F, D::Error>
 where
     D: Deserializer<'de>,
@@ -268,109 +575,4 @@ where
         }
     }
     deserializer.deserialize_map(TupleVariantVisitor(PhantomData))
-}
-
-/// Function used to transpose data from an iterator or serializable types,
-/// which would represent a row-major data record, to column-major data.
-/// This data is then ready to be JSON serialized and sent to Exasol.
-pub(crate) fn transpose_data<T, C, S>(columns: &[&C], data: T) -> Result<Vec<Vec<Value>>>
-where
-    S: Serialize,
-    C: ?Sized + Hash + Ord,
-    String: Borrow<C>,
-    T: IntoIterator<Item = S>,
-{
-    let iter_data = data
-        .into_iter()
-        .map(|s| to_seq_iter(s, columns).map(IntoIterator::into_iter))
-        .collect::<Result<Vec<IntoIter<Value>>>>()?;
-    Ok(ColumnMajorIterator(iter_data).collect::<Vec<Vec<Value>>>())
-}
-
-#[test]
-fn col_major_seq_data() {
-    #[derive(Clone, Serialize)]
-    struct SomeRow(String, String);
-
-    let row = SomeRow("val1".to_owned(), "val2".to_owned());
-    let row_major_data = vec![
-        row.clone(),
-        row.clone(),
-        row.clone(),
-        row.clone(),
-        row.clone(),
-    ];
-
-    let columns = &["col1", "col2"];
-    let col_major_data = transpose_data(columns, row_major_data);
-    println!("{:?}", col_major_data);
-}
-
-#[test]
-fn col_major_map_data() {
-    #[derive(Clone, Serialize)]
-    struct SomeRow {
-        col1: String,
-        col2: String,
-    }
-
-    let row = SomeRow {
-        col1: "val1".to_owned(),
-        col2: "val2".to_owned(),
-    };
-
-    let row_major_data = vec![
-        row.clone(),
-        row.clone(),
-        row.clone(),
-        row.clone(),
-        row.clone(),
-    ];
-
-    let columns = &["col1", "col2"];
-    let col_major_data = transpose_data(columns, row_major_data);
-    println!("{:?}", col_major_data);
-}
-
-fn to_seq_iter<C, S>(data: S, columns: &[&C]) -> Result<Vec<Value>>
-where
-    S: Serialize,
-    C: ?Sized + Hash + Ord,
-    String: Borrow<C>,
-{
-    let val = serde_json::to_value(data)?;
-
-    match val {
-        Value::Object(mut o) => columns
-            .iter()
-            .map(|c| {
-                o.remove(c)
-                    .ok_or(Error::BindError("Missing something".to_owned()))
-            })
-            .collect(),
-        Value::Array(a) => {
-            if columns.len() > a.len() {
-                Err(Error::RequestError(RequestError::InvalidResponse(
-                    "Not enough columns in data!",
-                )))
-            } else {
-                Ok(a.into_iter().take(columns.len()).collect())
-            }
-        }
-        _ => Err(Error::RequestError(RequestError::InvalidResponse("test"))),
-    }
-}
-
-struct ColumnMajorIterator(Vec<IntoIter<Value>>);
-
-impl Iterator for ColumnMajorIterator {
-    type Item = Vec<Value>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0
-            .iter_mut()
-            .map(|iter| iter.next())
-            .collect::<Option<Vec<Value>>>()
-            .and_then(|r| if r.is_empty() { None } else { Some(r) })
-    }
 }
