@@ -1,19 +1,20 @@
-use crate::error::{Error, RequestError, Result};
+use crate::error::{Error, Result};
 use crate::response::Column;
 use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, Visitor};
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
 use serde_json::{Error as SJError, Value};
 use std::borrow::{Borrow, Cow};
-use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::vec::IntoIter;
-use crate::DataType;
 
 #[test]
+#[allow(dead_code)]
 fn deser_row(){
     use serde_json::json;
+    use serde::Deserialize;
+    use std::collections::HashMap;
 
     let json_data = json!([
 		{
@@ -67,8 +68,8 @@ fn deser_row(){
     #[derive(Deserialize)]
     #[serde(tag = "col1", rename_all = "camelCase")]
     enum SomeRow4 {
-        Val2(String),
-        Val1(String)
+        Val2 { col2: String },
+        Val1 { col2: String }
     }
 
     // Untagged deserialization can also be employed
@@ -334,8 +335,8 @@ fn col_major_seq_data() {
     let row_major_data = vec![row.clone(), row.clone()];
 
     let columns = &["col1", "col2"];
-    let col_major_data = to_col_major(columns, row_major_data);
-    assert!(
+    let col_major_data = to_col_major(columns, row_major_data).unwrap();
+    assert_eq!(
         col_major_data,
         vec![
             vec!["val1".to_owned(), "val1".to_owned()],
@@ -360,8 +361,8 @@ fn col_major_map_data() {
     let row_major_data = vec![row.clone(), row.clone()];
 
     let columns = &["col2", "col1"];
-    let col_major_data = to_col_major(columns, row_major_data);
-    assert!(
+    let col_major_data = to_col_major(columns, row_major_data).unwrap();
+    assert_eq!(
         col_major_data,
         vec![
             vec!["val2".to_owned(), "val2".to_owned()],
@@ -379,7 +380,7 @@ fn col_major_map_data() {
 pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> Result<Vec<Vec<Value>>>
 where
     S: Serialize,
-    C: ?Sized + Hash + Ord,
+    C: ?Sized + Hash + Ord + Display,
     String: Borrow<C>,
     T: IntoIterator<Item = S>,
 {
@@ -451,35 +452,35 @@ impl Iterator for ColumnMajorIterator {
 /// # use exasol::error::Result;
 ///
 /// # let json_data = json!(
-///	#	{
-///	#	   "columns":[
-///	#	      {
-///	#	         "dataType":{
-///	#	            "size":10,
-///	#	            "type":"VARCHAR"
-///	#	         },
-///	#	         "name":"col1"
-///	#	      },
-///	#	      {
-///	#	         "dataType":{
-///	#	            "size":10,
-///	#	            "type":"VARCHAR"
-///	#	         },
-///	#	         "name":"col2"
-///	#	      }
-///	#	   ],
-///	#	   "data":[
-///	#	      [
-///	#	         "val1", "val3"
-///	#	      ],
-///	#	      [
-///	#	         "val2", "val4"
-///	#	      ]
-///	#	   ],
-///	#	   "numColumns":2,
-///	#	   "numRows":2,
-///	#	   "numRowsInMessage":2
-///	#	}
+///		{
+///		   "columns":[
+///		      {
+///		         "dataType":{
+///		            "size":10,
+///		            "type":"VARCHAR"
+///		         },
+///		         "name":"col1"
+///		      },
+///		      {
+///		         "dataType":{
+///		            "size":10,
+///		            "type":"VARCHAR"
+///		         },
+///		         "name":"col2"
+///		      }
+///		   ],
+///		   "data":[
+///		      [
+///		         "val1", "val3"
+///		      ],
+///		      [
+///		         "val2", "val4"
+///		      ]
+///		   ],
+///		   "numColumns":2,
+///		   "numRows":2,
+///		   "numRowsInMessage":2
+///		}
 /// #   );
 /// #
 /// #   let result_set1: ResultSetDe = serde_json::from_value(json_data.clone()).unwrap();
@@ -495,12 +496,15 @@ impl Iterator for ColumnMajorIterator {
 ///        Val2(String)
 ///    }
 ///
+///    #[derive(Deserialize)]
+///    struct SomeRow1(String, String);
+///
 ///    // Row variant can be chosen through internal tagging
 ///    #[derive(Deserialize)]
 ///    #[serde(tag = "col1", rename_all = "camelCase")]
 ///    enum SomeRow2 {
-///        Val2(String),
-///        Val1(String)
+///        Val2 { col2: String },
+///        Val1 { col2: String }
 ///    }
 ///
 ///    // Untagged deserialization can also be employed

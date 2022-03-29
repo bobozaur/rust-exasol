@@ -1,7 +1,7 @@
 use crate::response::{Attributes, ExaError, Response, ResponseData};
 use rsa;
 use serde_json;
-use std::fmt::{Debug, Display, Formatter, write};
+use std::fmt::{Debug, Display, Formatter};
 use std::num::ParseIntError;
 use tungstenite;
 use url;

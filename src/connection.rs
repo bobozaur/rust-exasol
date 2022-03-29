@@ -11,7 +11,7 @@ use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
-use crate::constants::{NOT_PONG, NO_PUBLIC_KEY, NO_RESPONSE_DATA, NO_RESULT_SET, WS_STR};
+use crate::constants::{NOT_PONG, NO_RESPONSE_DATA, NO_RESULT_SET, WS_STR};
 use crate::error::{ConnectionError, Error, RequestError, Result};
 use crate::query::{PreparedStatement, QueryResult};
 use crate::response::{Response, ResponseData};
@@ -517,8 +517,8 @@ impl ConnectionImpl {
         let payload = json!({"command": "login", "protocolVersion": protocol_version});
 
         let pem = self
-            .get_resp_data(payload)?
-            .and_then(|p| p.try_to_public_key_string());
+            .get_resp_data(payload)
+            .and_then(|p| p.try_to_public_key_string())?;
 
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)?)
     }

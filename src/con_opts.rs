@@ -44,9 +44,9 @@ impl Serialize for ProtocolVersion {
         S: Serializer,
     {
         match self {
-            Self::V1 => serializer.serialize_u8(1u8),
-            Self::V2 => serializer.serialize_u8(2u8),
-            Self::V3 => serializer.serialize_u8(3u8),
+            Self::V1 => serializer.serialize_u64(1),
+            Self::V2 => serializer.serialize_u64(2),
+            Self::V3 => serializer.serialize_u64(3),
         }
     }
 }
@@ -67,7 +67,7 @@ impl<'de> Deserialize<'de> for ProtocolVersion {
                     .write_str("Expecting an u8 representing the websocket API protocol version.")
             }
 
-            fn visit_u8<E>(self, v: u8) -> std::result::Result<Self::Value, E>
+            fn visit_u64<E>(self, v: u64) -> std::result::Result<Self::Value, E>
             where
                 E: de::Error,
             {
@@ -80,7 +80,7 @@ impl<'de> Deserialize<'de> for ProtocolVersion {
             }
         }
 
-        deserializer.deserialize_u8(ProtocolVersionVisitor)
+        deserializer.deserialize_u64(ProtocolVersionVisitor)
     }
 }
 

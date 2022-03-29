@@ -293,11 +293,9 @@ pub(crate) struct Attributes {
 #[test]
 #[allow(unused)]
 fn deser_login_info() {
-    use crate::con_opts::ProtocolVersion;
-
     let json_data = json!(
         {
-            "protocolVersion": ProtocolVersion::V3,
+            "protocolVersion": 3,
             "key1": "val1",
             "key2": "val2"
         }
@@ -522,7 +520,7 @@ impl Display for DataType {
 fn deser_to_row_major(){
     let json_data = json!([[1, 2, 3], [1, 2, 3]]);
     let row_major_data = to_row_major(json_data).unwrap();
-    assert!(row_major_data, vec![vec![1, 1],  vec![2, 2], vec![3, 3]]);
+    assert_eq!(row_major_data, vec![vec![1, 1],  vec![2, 2], vec![3, 3]]);
 }
 /// Deserialization function used to turn Exasol's
 /// column major data into row major format during deserialization.
