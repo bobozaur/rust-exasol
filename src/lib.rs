@@ -47,8 +47,9 @@
 //!
 //! ```
 //! # use exasol::error::Result;
-//! # use exasol::{connect, bind, QueryResult, Row};
+//! # use exasol::{connect, bind, QueryResult};
 //! # use std::env;
+//! # use serde_json::Value;
 //! #
 //! # let dsn = env::var("EXA_DSN").unwrap();
 //! # let schema = env::var("EXA_SCHEMA").unwrap();
@@ -60,7 +61,7 @@
 //!
 //! if let QueryResult::ResultSet(r) = result {
 //!     let object_names_500: Vec<String> = r.take(500)
-//!                                          .collect::<Result<Vec<Row>>>()
+//!                                          .collect::<Result<Vec<Vec<Value>>>>()
 //!                                          .unwrap()
 //!                                          .into_iter()
 //!                                          .map(|row| row[0].as_str().unwrap().to_owned())
@@ -130,3 +131,4 @@ pub use crate::connection::{connect, Connection};
 pub use crate::params::{bind, SQLParam, SQLParamMap};
 pub use crate::query::{PreparedStatement, QueryResult, ResultSet};
 pub use crate::response::{Column, DataType};
+pub use crate::row::{deserialize_as_seq};

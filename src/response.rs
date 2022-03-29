@@ -467,7 +467,7 @@ fn deser_column() {
 
 /// Struct containing the name and datatype (as seen in Exasol) of a given column.
 #[allow(unused)]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Column {
     pub name: String,
     #[serde(rename = "dataType")]
@@ -496,7 +496,7 @@ fn deser_datatype() {
 
 /// Struct representing a datatype for a column in a result set.
 #[allow(unused)]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataType {
     #[serde(rename = "type")]

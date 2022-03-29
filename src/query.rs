@@ -16,6 +16,7 @@ use std::vec::IntoIter;
 /// Enum containing the result of a query
 /// `ResultSet` variant holds a [ResultSet]
 /// `RowCount` variant holds the affected row count
+#[derive(Clone)]
 pub enum QueryResult {
     ResultSet(ResultSet),
     RowCount(u32),
@@ -49,7 +50,7 @@ impl QueryResult {
 /// Further rows get fetched as needed
 ///
 /// ```
-/// # use exasol::{connect, QueryResult, Row};
+/// # use exasol::{connect, QueryResult};
 /// # use serde_json::Value;
 /// # use exasol::error::Result;
 /// # use std::env;
@@ -62,7 +63,7 @@ impl QueryResult {
 /// let result = exa_con.execute("SELECT * FROM EXA_ALL_OBJECTS LIMIT 2000;").unwrap();
 ///
 /// if let QueryResult::ResultSet(r) = result {
-///     let x = r.take(50).collect::<Result<Vec<Row>>>();
+///     let x = r.take(50).collect::<Result<Vec<Vec<Value>>>>();
 ///         if let Ok(v) = x {
 ///             for row in v.iter() {
 ///                 // do stuff
@@ -75,6 +76,7 @@ impl QueryResult {
 /// based on the `fetch_size` parameter set in the [ConOpts](crate::ConOpts) used when constructing
 /// the [Connection](crate::Connection), until the result set is entirely read.
 #[allow(unused)]
+#[derive(Clone)]
 pub struct ResultSet<T: DeserializeOwned = Vec<Value>> {
     num_columns: u8,
     total_rows_num: u32,
@@ -128,53 +130,28 @@ where
     /// it's merely a means for changing the generic row type.
     ///
     /// ```
-    /// # use serde_json::json;
-    /// # use exasol::*;
+    /// # use exasol::{connect, QueryResult};
     /// # use exasol::error::Result;
+    /// # use serde_json::Value;
+    /// # use std::env;
     ///
-    /// # let json_data = json!(
-    ///	#	{
-    ///	#	   "columns":[
-    ///	#	      {
-    ///	#	         "dataType":{
-    ///	#	            "size":10,
-    ///	#	            "type":"VARCHAR"
-    ///	#	         },
-    ///	#	         "name":"col1"
-    ///	#	      },
-    ///	#	      {
-    ///	#	         "dataType":{
-    ///	#	            "size":10,
-    ///	#	            "type":"VARCHAR"
-    ///	#	         },
-    ///	#	         "name":"col2"
-    ///	#	      }
-    ///	#	   ],
-    ///	#	   "data":[
-    ///	#	      [
-    ///	#	         "val1", "val3"
-    ///	#	      ],
-    ///	#	      [
-    ///	#	         "val2", "val4"
-    ///	#	      ]
-    ///	#	   ],
-    ///	#	   "numColumns":2,
-    ///	#	   "numRows":2,
-    ///	#	   "numRowsInMessage":2
-    ///	#	}
-    /// #   );
-    /// #
-    /// #   let result_set: ResultSetDe = serde_json::from_value(json_data).unwrap();
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
     ///
-    /// // Get a result set from the database
-    /// // and change the expected row type with the turbofish notation
-    /// result_set = result_set.with_row_type::<(String, String)>();
-    /// let row1 = result_set.next();
+    /// if let QueryResult::ResultSet(result_set) = result {
+    ///     // Change the expected row type with the turbofish notation
+    ///     let mut result_set = result_set.with_row_type::<(String, String)>();
+    ///     let row1 = result_set.next();
     ///
-    /// // Nothing stops you from changing row types
-    /// // on the same result set, even while iterating through it
-    /// result_set = result_set.with_row_type::<Vec<String>>();
-    /// let row2 = result_set.next();
+    ///     // Nothing stops you from changing row types
+    ///     // on the same result set, even while iterating through it
+    ///     let mut result_set = result_set.with_row_type::<Vec<String>>();
+    ///     let row2 = result_set.next();
+    /// }
     /// ```
     pub fn with_row_type<R>(mut self) -> ResultSet<R>
     where

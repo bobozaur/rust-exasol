@@ -11,26 +11,26 @@ use std::vec::IntoIter;
 
 #[test]
 #[allow(dead_code)]
-fn deser_row(){
-    use serde_json::json;
+fn deser_row() {
     use serde::Deserialize;
+    use serde_json::json;
     use std::collections::HashMap;
 
     let json_data = json!([
-		{
-		   "dataType":{
-		      "size": 10,
-		      "type":"VARCHAR"
-		   },
-		   "name":"col1"
-		},
         {
-		   "dataType":{
-		      "size": 10,
-		      "type":"VARCHAR"
-		   },
-		   "name":"col2"
-		}
+           "dataType":{
+              "size": 10,
+              "type":"VARCHAR"
+           },
+           "name":"col1"
+        },
+        {
+           "dataType":{
+              "size": 10,
+              "type":"VARCHAR"
+           },
+           "name":"col2"
+        }
     ]
     );
 
@@ -53,15 +53,15 @@ fn deser_row(){
     struct SomeRow1(String, String);
 
     #[derive(Deserialize)]
-    struct SomeRow2{
+    struct SomeRow2 {
         col1: String,
-        col2: String
+        col2: String,
     }
 
     #[derive(Deserialize)]
     struct SomeRow3 {
         #[serde(flatten)]
-        map: HashMap<String, Value>
+        map: HashMap<String, Value>,
     }
 
     // Row variant can be chosen through internal tagging
@@ -69,7 +69,7 @@ fn deser_row(){
     #[serde(tag = "col1", rename_all = "camelCase")]
     enum SomeRow4 {
         Val2 { col2: String },
-        Val1 { col2: String }
+        Val1 { col2: String },
     }
 
     // Untagged deserialization can also be employed
@@ -86,9 +86,12 @@ fn deser_row(){
         #[serde(deserialize_with = "deserialize_as_seq")]
         SomeVar2(SomeRow1),
         // Struct variants are map-like, so they can be deserialized right away
-        SomeVar3{col1: String, col2: String},
+        SomeVar3 {
+            col1: String,
+            col2: String,
+        },
         // And so can variants of a struct type, but the one above has order precedence
-        SomeVar4(SomeRow2)
+        SomeVar4(SomeRow2),
     }
 
     SomeRow1::deserialize(row1).unwrap();
@@ -447,46 +450,18 @@ impl Iterator for ColumnMajorIterator {
 /// this function does.
 ///
 /// ```
-/// # use serde_json::json;
-/// # use exasol::*;
+/// # use exasol::{connect, QueryResult, deserialize_as_seq};
 /// # use exasol::error::Result;
+/// # use serde_json::Value;
+/// # use serde::Deserialize;
+/// # use std::env;
 ///
-/// # let json_data = json!(
-///		{
-///		   "columns":[
-///		      {
-///		         "dataType":{
-///		            "size":10,
-///		            "type":"VARCHAR"
-///		         },
-///		         "name":"col1"
-///		      },
-///		      {
-///		         "dataType":{
-///		            "size":10,
-///		            "type":"VARCHAR"
-///		         },
-///		         "name":"col2"
-///		      }
-///		   ],
-///		   "data":[
-///		      [
-///		         "val1", "val3"
-///		      ],
-///		      [
-///		         "val2", "val4"
-///		      ]
-///		   ],
-///		   "numColumns":2,
-///		   "numRows":2,
-///		   "numRowsInMessage":2
-///		}
-/// #   );
-/// #
-/// #   let result_set1: ResultSetDe = serde_json::from_value(json_data.clone()).unwrap();
-/// #   let result_set2: ResultSetDe = serde_json::from_value(json_data.clone()).unwrap();
-/// #   let result_set3: ResultSetDe = serde_json::from_value(json_data).unwrap();
-///
+/// # let dsn = env::var("EXA_DSN").unwrap();
+/// # let schema = env::var("EXA_SCHEMA").unwrap();
+/// # let user = env::var("EXA_USER").unwrap();
+/// # let password = env::var("EXA_PASSWORD").unwrap();
+/// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+/// let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
 ///
 ///    // Default serde behaviour, which is external tagging, is not supported
 ///    // and it doesn't even make sense in the context of a database row.
@@ -526,19 +501,19 @@ impl Iterator for ColumnMajorIterator {
 ///        SomeVar4(SomeRow2)
 ///    }
 ///
-/// // We get some results from the database
-/// // and set the row types we want to deserialize them to.
-/// result_set1 = result_set1.with_row_type::<Val1>();
-/// result_set2 = result_set2.with_row_type::<SomeRow2>();
-/// result_set3 = result_set2.with_row_type::<SomeRow3>();
-///
-/// // Due to the unsupported external tagging deserialization
-/// // this will error out
-/// let rows1: Result<Vec<Val1>> = result_set1.collect();
-/// // But internal tagging works
-/// let rows2: Result<Vec<SomeRow2>> = result_set2.collect().unwrap();
-/// // And so does untagged deserialization
-/// let rows3: Result<Vec<SomeRow3>> = result_set3.collect().unwrap();
+/// if let QueryResult::ResultSet(r) = result {
+///     let result2 = r.clone().with_row_type::<SomeRow2>();
+///     let result3 = r.clone().with_row_type::<SomeRow3>();
+///     let result1 = r.with_row_type::<Val1>();
+///         
+///     // Due to the unsupported external tagging deserialization
+///     // this will error out
+///     let rows1 = result1.collect::<Result<Vec<Val1>>>().unwrap();
+///     // But internal tagging works
+///     let rows2 = result2.collect::<Result<Vec<SomeRow2>>>().unwrap();
+///     // And so does untagged deserialization
+///     let rows3 = result3.collect::<Result<Vec<SomeRow3>>>().unwrap();
+///  }
 /// ```
 pub fn deserialize_as_seq<'de, D, F>(deserializer: D) -> std::result::Result<F, D::Error>
 where

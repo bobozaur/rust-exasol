@@ -111,7 +111,7 @@ impl Connection {
     /// Returns a [Vec<QueryResult>].
     ///
     /// ```
-    /// # use exasol::{connect, Row, QueryResult};
+    /// # use exasol::{connect, QueryResult};
     /// # use exasol::error::Result;
     /// # use std::env;
     ///
@@ -135,7 +135,7 @@ impl Connection {
     /// Creates a prepared statement of type [PreparedStatement].
     /// The prepared statement can then be executed with the provided data.
     /// ```
-    /// # use exasol::{connect, Row, QueryResult, PreparedStatement};
+    /// # use exasol::{connect, QueryResult, PreparedStatement};
     /// # use exasol::error::Result;
     /// # use serde_json::json;
     /// # use std::env;

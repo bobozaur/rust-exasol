@@ -29,6 +29,7 @@ mod tests {
     use exasol::{connect, Column, PreparedStatement, QueryResult};
 
     #[test]
+    #[ignore]
     #[allow(unused)]
     fn it_works() {
         let dsn = env::var("EXA_DSN").unwrap();
