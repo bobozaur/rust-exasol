@@ -243,6 +243,11 @@ impl ConOpts {
         self.0.use_encryption = flag
     }
 
+    #[cfg(not(any(feature = "native-tls", feature = "rustls")))]
+    pub fn set_encryption(&mut self, _flag: bool) {
+        panic!("native-tls or rustls features must be enabled to set encryption")
+    }
+
     /// Compression flag (defaults to `false`).
     pub fn get_compression(&self) -> bool {
         self.0.use_compression
@@ -252,6 +257,11 @@ impl ConOpts {
     #[cfg(feature = "flate2")]
     pub fn set_compression(&mut self, flag: bool) {
         self.0.use_compression = flag
+    }
+
+    #[cfg(not(feature = "flate2"))]
+    pub fn set_compression(&mut self, _flag: bool) {
+        panic!("flate2 feature must be enabled to set compression")
     }
 
     /// Autocommit flag (defaults to `true`).
