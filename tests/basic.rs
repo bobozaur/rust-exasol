@@ -26,7 +26,7 @@ mod tests {
     use serde_json::{de, from_value, json, Error, Map, Value};
 
     use exasol::error::Result;
-    use exasol::{connect, Column, PreparedStatement, QueryResult};
+    use exasol::{connect, Column, PreparedStatement, QueryResult, ResultSet};
 
     #[test]
     #[allow(unused)]

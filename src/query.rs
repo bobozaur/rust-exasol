@@ -30,6 +30,26 @@ impl Debug for QueryResult {
     }
 }
 
+impl TryFrom<QueryResult> for ResultSet {
+    type Error = ();
+    fn try_from(value: QueryResult) -> std::result::Result<Self, Self::Error> {
+        match value {
+            QueryResult::ResultSet(r) => Ok(r),
+            _ => Err(())
+        }
+    }
+}
+
+impl TryFrom<QueryResult> for u32 {
+    type Error = ();
+    fn try_from(value: QueryResult) -> std::result::Result<Self, Self::Error> {
+        match value {
+            QueryResult::RowCount(r) => Ok(r),
+            _ => Err(())
+        }
+    }
+}
+
 impl QueryResult {
     pub(crate) fn from_de(
         query_result: QueryResultDe,
