@@ -1,9 +1,11 @@
 use crate::Column;
 
-#[cfg(not(any(feature = "native-tls", feature = "rustls")))]
 pub(crate) static WS_STR: &str = "ws";
-#[cfg(any(feature = "native-tls", feature = "rustls"))]
-pub(crate) static WS_STR: &str = "wss";
+pub(crate) static WSS_STR: &str = "wss";
+
+pub(crate) static DEFAULT_PORT: u16 = 8563;
+pub(crate) static DEFAULT_FETCH_SIZE: u32 = 5 * 1024 * 1024;
+pub(crate) static DEFAULT_CLIENT_PREFIX: &str = "Rust Exasol";
 
 pub(crate) static NO_RESULT_SET: &str = "No result set found";
 pub(crate) static NO_RESPONSE_DATA: &str = "No response data received";

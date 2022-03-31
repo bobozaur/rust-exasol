@@ -16,7 +16,6 @@ use std::vec::IntoIter;
 /// Enum containing the result of a query
 /// `ResultSet` variant holds a [ResultSet]
 /// `RowCount` variant holds the affected row count
-#[derive(Clone)]
 pub enum QueryResult {
     ResultSet(ResultSet),
     RowCount(u32),
@@ -76,7 +75,6 @@ impl QueryResult {
 /// based on the `fetch_size` parameter set in the [ConOpts](crate::ConOpts) used when constructing
 /// the [Connection](crate::Connection), until the result set is entirely read.
 #[allow(unused)]
-#[derive(Clone)]
 pub struct ResultSet<T: DeserializeOwned = Vec<Value>> {
     num_columns: u8,
     total_rows_num: u32,
@@ -213,7 +211,7 @@ where
     fn fetch_chunk(&mut self) -> Result<()> {
         // Check the statement handle
         self.result_set_handle
-            .ok_or(RequestError::MissingHandleError.into())
+            .ok_or_else(|| RequestError::MissingHandleError.into())
             .and_then(|h| {
                 // Dereference connection
                 let mut con = (*self.connection).borrow_mut();
@@ -229,14 +227,11 @@ where
                     "numBytes": fetch_size,
                 });
 
-                con.get_resp_data(payload)?
-                    .try_to_fetched_data()
-                    .and_then(|f| {
-                        self.chunk_rows_num = f.chunk_rows_num;
-                        self.chunk_rows_pos = 0;
-                        self.data_iter = f.data.into_iter();
-                        Ok(())
-                    })
+                con.get_resp_data(payload)?.try_to_fetched_data().map(|f| {
+                    self.chunk_rows_num = f.chunk_rows_num;
+                    self.chunk_rows_pos = 0;
+                    self.data_iter = f.data.into_iter();
+                })
             })
     }
 }

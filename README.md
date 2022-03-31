@@ -9,6 +9,7 @@ Features available:
  - Single and batch query execution
  - Prepared statements
  - WSS support through native-tls and rustls
+ - Compression support
  - Row deserialization into Rust types
  - Named parameter binding
  - Autocommit is enabled by default. Disabling it results in transactional mode being enabled, which requires explicit "COMMIT" or "ROLLBACK" statements to be executed.
@@ -16,11 +17,11 @@ Features available:
 Features planned for future versions:
   - Performant IMPORT/EXPORT functionalities
   - Performant parallel IMPORT/EXPORT
-  - Compression support
 
 ##Crate Features:
 * native-tls - (disabled by default) enables `tungstenite`'s WSS support through `native-tls`
 * rustls - (disabled by default) enables `tungstenite`'s WSS support through `rustls`
+* flate2 - (disabled by default) enables support for requests and responses compression
 
 
 ##License

@@ -61,7 +61,7 @@ impl ResponseData {
         con_impl: &Rc<RefCell<ConnectionImpl>>,
     ) -> Result<Vec<QueryResult>> {
         match self {
-            Self::Results(res) => Ok(res.to_query_results(con_impl)),
+            Self::Results(res) => Ok(res.into_query_results(con_impl)),
             _ => Err(NO_RESPONSE_DATA.into()),
         }
     }
@@ -126,34 +126,34 @@ impl std::error::Error for ExaError {}
 #[allow(unused)]
 fn deserialize_results() {
     let result = json!(
-		{
-		   "numResults":1,
-		   "results":[
-		      {
-		         "resultSet":{
-		            "columns":[
-		               {
-		                  "dataType":{
-		                     "precision":1,
-		                     "scale":0,
-		                     "type":"DECIMAL"
-		                  },
-		                  "name":"1"
-		               }
-		            ],
-		            "data":[
-		               [
-		                  1
-		               ]
-		            ],
-		            "numColumns":1,
-		            "numRows":1,
-		            "numRowsInMessage":1
-		         },
-		         "resultType":"resultSet"
-		      }
-		   ]
-		}
+        {
+           "numResults":1,
+           "results":[
+              {
+                 "resultSet":{
+                    "columns":[
+                       {
+                          "dataType":{
+                             "precision":1,
+                             "scale":0,
+                             "type":"DECIMAL"
+                          },
+                          "name":"1"
+                       }
+                    ],
+                    "data":[
+                       [
+                          1
+                       ]
+                    ],
+                    "numColumns":1,
+                    "numRows":1,
+                    "numRowsInMessage":1
+                 },
+                 "resultType":"resultSet"
+              }
+           ]
+        }
     );
     let de: Results = serde_json::from_value(result).unwrap();
 }
@@ -174,7 +174,10 @@ impl Results {
     /// each with a reference to a connection.
     ///
     /// The reference is needed for further row fetching.
-    pub(crate) fn to_query_results(self, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Vec<QueryResult> {
+    pub(crate) fn into_query_results(
+        self,
+        con_rc: &Rc<RefCell<ConnectionImpl>>,
+    ) -> Vec<QueryResult> {
         self.results
             .into_iter()
             .map(|q| QueryResult::from_de(q, con_rc))
@@ -209,22 +212,22 @@ pub(crate) struct FetchedData {
 #[allow(unused)]
 fn deserialize_prepared() {
     let result = json!(
-		{
-		   "statementHandle":1,
-		   "parameterData":{
-		      "numColumns":10,
-		      "columns":[
-		         {
-		            "dataType":{
-		               "precision":1,
-		               "scale":0,
-		               "type":"DECIMAL"
-		            },
-		            "name":"1"
-		         }
-		      ]
-		   }
-		}
+        {
+           "statementHandle":1,
+           "parameterData":{
+              "numColumns":10,
+              "columns":[
+                 {
+                    "dataType":{
+                       "precision":1,
+                       "scale":0,
+                       "type":"DECIMAL"
+                    },
+                    "name":"1"
+                 }
+              ]
+           }
+        }
     );
     let de: PreparedStatementDe = serde_json::from_value(result).unwrap();
 }
@@ -241,19 +244,19 @@ pub(crate) struct PreparedStatementDe {
 #[allow(unused)]
 fn deser_param_data() {
     let json_data = json!(
-		{
-		   "numColumns":10,
-		   "columns":[
-		      {
-		         "dataType":{
-		            "precision":1,
-		            "scale":0,
-		            "type":"DECIMAL"
-		         },
-		         "name":"1"
-		      }
-		   ]
-		}
+        {
+           "numColumns":10,
+           "columns":[
+              {
+                 "dataType":{
+                    "precision":1,
+                    "scale":0,
+                    "type":"DECIMAL"
+                 },
+                 "name":"1"
+              }
+           ]
+        }
     );
 
     let x: Attributes = serde_json::from_value(json_data).unwrap();
@@ -319,11 +322,11 @@ pub(crate) struct LoginInfo {
 #[allow(unused)]
 fn deser_public_key() {
     let json_data = json!(
-		{
-		   "publicKeyExponent":"test1",
-		   "publicKeyModulus":"test2",
-		   "publicKeyPem":"test3"
-		}
+        {
+           "publicKeyExponent":"test1",
+           "publicKeyModulus":"test2",
+           "publicKeyPem":"test3"
+        }
     );
 
     let x: PublicKey = serde_json::from_value(json_data).unwrap();
@@ -350,29 +353,29 @@ impl From<PublicKey> for String {
 #[allow(unused)]
 fn deser_query_result1() {
     let json_data = json!(
-		{
-		   "resultSet":{
-		      "columns":[
-		         {
-		            "dataType":{
-		               "precision":1,
-		               "scale":0,
-		               "type":"DECIMAL"
-		            },
-		            "name":"1"
-		         }
-		      ],
-		      "data":[
-		         [
-		            1
-		         ]
-		      ],
-		      "numColumns":1,
-		      "numRows":1,
-		      "numRowsInMessage":1
-		   },
-		   "resultType":"resultSet"
-		}
+        {
+           "resultSet":{
+              "columns":[
+                 {
+                    "dataType":{
+                       "precision":1,
+                       "scale":0,
+                       "type":"DECIMAL"
+                    },
+                    "name":"1"
+                 }
+              ],
+              "data":[
+                 [
+                    1
+                 ]
+              ],
+              "numColumns":1,
+              "numRows":1,
+              "numRowsInMessage":1
+           },
+           "resultType":"resultSet"
+        }
     );
 
     let de: QueryResultDe = serde_json::from_value(json_data).unwrap();
@@ -408,26 +411,26 @@ pub(crate) enum QueryResultDe {
 #[allow(unused)]
 fn deser_result_set() {
     let json_data = json!(
-		{
-		   "columns":[
-		      {
-		         "dataType":{
-		            "precision":1,
-		            "scale":0,
-		            "type":"DECIMAL"
-		         },
-		         "name":"1"
-		      }
-		   ],
-		   "data":[
-		      [
-		         1
-		      ]
-		   ],
-		   "numColumns":1,
-		   "numRows":1,
-		   "numRowsInMessage":1
-		}
+        {
+           "columns":[
+              {
+                 "dataType":{
+                    "precision":1,
+                    "scale":0,
+                    "type":"DECIMAL"
+                 },
+                 "name":"1"
+              }
+           ],
+           "data":[
+              [
+                 1
+              ]
+           ],
+           "numColumns":1,
+           "numRows":1,
+           "numRowsInMessage":1
+        }
     );
 
     let de: ResultSetDe = serde_json::from_value(json_data).unwrap();
@@ -452,14 +455,14 @@ pub(crate) struct ResultSetDe {
 #[allow(unused)]
 fn deser_column() {
     let json_data = json!(
-		{
-		   "dataType":{
-		      "precision":1,
-		      "scale":0,
-		      "type":"DECIMAL"
-		   },
-		   "name":"1"
-		}
+        {
+           "dataType":{
+              "precision":1,
+              "scale":0,
+              "type":"DECIMAL"
+           },
+           "name":"1"
+        }
     );
 
     let de: Column = serde_json::from_value(json_data).unwrap();
@@ -484,11 +487,11 @@ impl Display for Column {
 #[allow(unused)]
 fn deser_datatype() {
     let json_data = json!(
-		{
-		   "precision":1,
-		   "scale":0,
-		   "type":"DECIMAL"
-		}
+        {
+           "precision":1,
+           "scale":0,
+           "type":"DECIMAL"
+        }
     );
 
     let de: DataType = serde_json::from_value(json_data).unwrap();
@@ -517,10 +520,10 @@ impl Display for DataType {
 }
 
 #[test]
-fn deser_to_row_major(){
+fn deser_to_row_major() {
     let json_data = json!([[1, 2, 3], [1, 2, 3]]);
     let row_major_data = to_row_major(json_data).unwrap();
-    assert_eq!(row_major_data, vec![vec![1, 1],  vec![2, 2], vec![3, 3]]);
+    assert_eq!(row_major_data, vec![vec![1, 1], vec![2, 2], vec![3, 3]]);
 }
 /// Deserialization function used to turn Exasol's
 /// column major data into row major format during deserialization.
@@ -594,7 +597,7 @@ fn to_row_major<'de, D: Deserializer<'de>>(
             while let Some(elem) = seq.next_element()? {
                 self.0
                     .get_mut(i)
-                    .ok_or(A::Error::custom("Unequal columns and rows"))?
+                    .ok_or_else(|| A::Error::custom("Unequal columns and rows"))?
                     .push(elem);
                 i += 1;
             }
@@ -620,7 +623,10 @@ fn to_row_major<'de, D: Deserializer<'de>>(
             seq.next_element_seed(FirstColumn(&mut transposed))?;
             // Then keep appending to these vectors
             // already created in outer vec while there's data
-            while let Some(_) = seq.next_element_seed(OtherColumn(&mut transposed))? {}
+            while seq
+                .next_element_seed(OtherColumn(&mut transposed))?
+                .is_some()
+            {}
             Ok(transposed)
         }
     }

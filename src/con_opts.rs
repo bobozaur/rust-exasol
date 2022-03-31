@@ -1,4 +1,5 @@
-use crate::error::{ConnectionError, Error, Result};
+use crate::constants::{DEFAULT_CLIENT_PREFIX, DEFAULT_FETCH_SIZE, DEFAULT_PORT, WSS_STR, WS_STR};
+use crate::error::{ConnectionError, Result};
 use lazy_static::lazy_static;
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom;
@@ -13,15 +14,11 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::net::ToSocketAddrs;
 
-static DEFAULT_PORT: u32 = 8563;
-static DEFAULT_FETCH_SIZE: u32 = 5 * 1024 * 1024;
-static DEFAULT_CLIENT_PREFIX: &str = "Rust Exasol";
-
 /// Enum listing the protocol versions that can be used when
 /// establishing a websocket connection to Exasol.
 /// Defaults to the highest defined protocol version and
 /// falls back to the highest protocol version supported by the server.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ProtocolVersion {
     V1,
     V2,
@@ -83,61 +80,34 @@ impl<'de> Deserialize<'de> for ProtocolVersion {
         deserializer.deserialize_u64(ProtocolVersionVisitor)
     }
 }
-
-/// Connection options for [Connection](crate::Connection)
-/// The DSN may or may not contain a port - if it does not,
-/// the port field in this struct is used as a fallback.
-///
-/// Default is implemented for [ConOpts] so that most fields have fallback values.
-/// DSN, user, password and schema fields are practically mandatory,
-/// as they otherwise default to an empty string.
-/// ```
-///  use exasol::ConOpts;
-///
-///  let opts = ConOpts {
-///             dsn: "test_dsn".to_owned(),
-///             user: "test_user".to_owned(),
-///             password: "test_password".to_owned(),
-///             schema: "test_schema".to_owned(),
-///             autocommit: false,
-///             .. ConOpts::default()
-///             };
-///
-/// // Equivalent to the above
-/// let mut opts = ConOpts::new(); // calls default() under the hood
-///
-/// opts.dsn = "test_dsn".to_owned();
-/// opts.user = "test_user".to_owned();
-/// opts.password = "test_password".to_owned();
-/// opts.schema = "test_schema".to_owned();
-/// opts.autocommit = false;
-/// ```
-#[derive(Debug)]
-pub struct ConOpts {
-    pub dsn: String,
-    pub user: String,
-    pub password: String,
-    pub schema: String,
-    pub port: u32,
-    pub protocol_version: ProtocolVersion,
-    pub client_name: String,
-    pub client_version: String,
-    pub client_os: String,
-    pub fetch_size: u32,
-    pub query_timeout: u32,
-    pub use_compression: bool,
-    pub autocommit: bool,
+/// Will box this for efficiency
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct InnerOpts {
+    dsn: Option<String>,
+    user: Option<String>,
+    password: Option<String>,
+    schema: Option<String>,
+    port: u16,
+    protocol_version: ProtocolVersion,
+    client_name: String,
+    client_version: String,
+    client_os: String,
+    fetch_size: u32,
+    query_timeout: u32,
+    use_encryption: bool,
+    use_compression: bool,
+    autocommit: bool,
 }
 
-impl Default for ConOpts {
+impl Default for InnerOpts {
     fn default() -> Self {
-        let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or("UNKNOWN".to_owned());
+        let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "UNKNOWN".to_owned());
 
         Self {
-            dsn: "".to_owned(),
-            user: "".to_owned(),
-            password: "".to_owned(),
-            schema: "".to_owned(),
+            dsn: None,
+            user: None,
+            password: None,
+            schema: None,
             port: DEFAULT_PORT,
             protocol_version: ProtocolVersion::V3,
             client_name: format!("{} {}", DEFAULT_CLIENT_PREFIX, crate_version),
@@ -145,24 +115,161 @@ impl Default for ConOpts {
             client_os: env::consts::OS.to_owned(),
             fetch_size: DEFAULT_FETCH_SIZE,
             query_timeout: 0,
+            use_encryption: false,
             use_compression: false,
             autocommit: true,
         }
     }
 }
 
-impl Display for ConOpts {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DSN: {}\nUser: {}\n Fallback port: {}\n Client: {}\n Client version: {}\n Fetch size: {}\n Query timeout: {}\n Use compression: {}\n Autocommit: {}",
-        self.dsn, self.user, self.port, self.client_name, self.client_version, self.fetch_size, self.query_timeout, self.use_compression, self.autocommit)
-    }
-}
+/// Connection options for [Connection](crate::Connection)
+/// The DSN may or may not contain a port - if it does not,
+/// the port field in this struct is used as a fallback.
+///
+/// Default is implemented for [ConOpts] so that most fields have fallback values.
+/// DSN, user, password and schema fields are practically mandatory,
+/// as they otherwise default to an empty string or JSON null.
+/// ```
+///  use exasol::ConOpts;
+///
+///  let mut opts = ConOpts::new(); // calls default() under the hood
+///  opts.set_dsn("test_dsn");
+///  opts.set_user("test_user");
+///  opts.set_password("test_password");
+///  opts.set_schema("test_schema");
+///  opts.set_autocommit(false);
+/// ```
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
+pub struct ConOpts(Box<InnerOpts>);
 
 /// Connection options
 impl ConOpts {
     /// Creates a default implementation of [ConOpts]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// DSN (defaults to `None`)
+    pub fn get_dsn(&self) -> Option<&str> {
+        self.0.dsn.as_deref()
+    }
+
+    pub fn set_dsn<T>(&mut self, dsn: T)
+    where
+        T: Into<String>,
+    {
+        self.0.dsn = Some(dsn.into())
+    }
+
+    /// Port (defaults to `8563`).
+    pub fn get_port(&self) -> u16 {
+        self.0.port
+    }
+
+    pub fn set_port(&mut self, port: u16) {
+        self.0.port = port
+    }
+
+    /// Schema (defaults to `None`).
+    pub fn get_schema(&self) -> Option<&str> {
+        self.0.schema.as_deref()
+    }
+
+    pub fn set_schema<T>(&mut self, schema: T)
+    where
+        T: Into<String>,
+    {
+        self.0.schema = Some(schema.into())
+    }
+
+    /// User (defaults to `None`).
+    pub fn get_user(&self) -> Option<&str> {
+        self.0.user.as_deref()
+    }
+
+    pub fn set_user<T>(&mut self, user: T)
+    where
+        T: Into<String>,
+    {
+        self.0.user = Some(user.into())
+    }
+
+    /// Password (defaults to `None`).
+    pub fn get_password(&self) -> Option<&str> {
+        self.0.password.as_deref()
+    }
+
+    pub fn set_password<T>(&mut self, password: T)
+    where
+        T: Into<String>,
+    {
+        self.0.password = Some(password.into())
+    }
+
+    /// Protocol Version (defaults to `ProtocolVersion::V3`).
+    pub fn get_protocol_version(&self) -> ProtocolVersion {
+        self.0.protocol_version
+    }
+
+    pub fn set_protocol_version(&mut self, pv: ProtocolVersion) {
+        self.0.protocol_version = pv
+    }
+
+    /// Data fetch size in bytes (defaults to `5,242,880 = 5 * 1024 * 1024`).
+    pub fn get_fetch_size(&self) -> u32 {
+        self.0.fetch_size
+    }
+
+    pub fn set_fetch_size(&mut self, fetch_size: u32) {
+        self.0.fetch_size = fetch_size
+    }
+
+    /// Query timeout (defaults to `0`, which means it's disabled).
+    pub fn get_query_timeout(&self) -> u32 {
+        self.0.query_timeout
+    }
+
+    pub fn set_query_timeout(&mut self, timeout: u32) {
+        self.0.query_timeout = timeout
+    }
+
+    /// Encryption flag (defaults to `false`).
+    pub fn get_encryption(&self) -> bool {
+        self.0.use_encryption
+    }
+    /// Sets encryption by allowing the use of a secure websocket (WSS).
+    #[cfg(any(feature = "native-tls", feature = "rustls"))]
+    pub fn set_encryption(&mut self, flag: bool) {
+        self.0.use_encryption = flag
+    }
+
+    /// Compression flag (defaults to `false`).
+    pub fn get_compression(&self) -> bool {
+        self.0.use_compression
+    }
+
+    /// Sets the compression flag.
+    #[cfg(feature = "flate2")]
+    pub fn set_compression(&mut self, flag: bool) {
+        self.0.use_compression = flag
+    }
+
+    /// Autocommit flag (defaults to `true`).
+    pub fn get_autocommit(&self) -> bool {
+        self.0.autocommit
+    }
+
+    /// Sets the autocommit flag
+    pub fn set_autocommit(&mut self, flag: bool) {
+        self.0.autocommit = flag
+    }
+
+    /// Convenience method for determining the websocket type.
+    pub(crate) fn get_ws_prefix(&self) -> &str {
+        match self.get_encryption() {
+            false => WS_STR,
+            true => WSS_STR,
+        }
     }
 
     /// Parses the provided DSN to expand ranges and resolve IP addresses.
@@ -178,26 +285,35 @@ impl ConOpts {
                     ").unwrap();
         }
 
-        RE.captures(&self.dsn)
-            .ok_or::<Error>(ConnectionError::InvalidDSN.into())
+        self.0
+            .dsn
+            .as_deref()
+            .and_then(|dsn| RE.captures(dsn))
+            .ok_or_else(|| ConnectionError::InvalidDSN.into())
             .and_then(|cap| {
+                // Parse capture groups from regex
                 let hostname_prefix = &cap[1];
                 let start_range = Self::get_dsn_part(&cap, 2);
                 let end_range = Self::get_dsn_part(&cap, 3);
                 let hostname_suffix = Self::get_dsn_part(&cap, 4);
                 let _fingerprint = Self::get_dsn_part(&cap, 5);
                 let port = Self::get_dsn_part(&cap, 6)
-                    .parse::<u32>()
-                    .map_or(self.port, |x| x);
+                    .parse::<u16>()
+                    .unwrap_or(self.0.port);
 
-                let mut hosts = vec![];
+                // Create a new vec for storing hosts
+                let mut hosts = Vec::new();
 
+                // If there's no start range, then there's a single possible host
                 if start_range.is_empty() {
                     hosts.push(format!("{}{}:{}", hostname_prefix, hostname_suffix, port));
                 } else {
+                    // If ranges were provided, then generate all possible hostnames
                     let start_range = start_range.parse::<u8>()?;
                     let end_range = end_range.parse::<u8>()?;
 
+                    // The order does not even matter
+                    // Rust's range will increment/decrement appropriately :]
                     for i in start_range..end_range {
                         hosts.push(format!(
                             "{}{}{}:{}",
@@ -206,11 +322,12 @@ impl ConOpts {
                     }
                 }
 
+                // Now we have to resolve hostnames to IPs
                 let mut addresses = hosts
                     .into_iter()
                     .map(|h| {
                         Ok(h.to_socket_addrs()?
-                            .map(|ip| ip.to_string().split(":").take(1).collect())
+                            .map(|ip| ip.to_string().split(':').take(1).collect())
                             .collect::<Vec<String>>())
                     })
                     .collect::<Result<Vec<Vec<String>>>>()?
@@ -229,25 +346,25 @@ impl ConOpts {
     pub(crate) fn encrypt_password(&self, public_key: RsaPublicKey) -> Result<String> {
         let mut rng = OsRng;
         let padding = PaddingScheme::new_pkcs1v15_encrypt();
-        let enc_password =
-            base64::encode(public_key.encrypt(&mut rng, padding, &self.password.as_bytes())?);
-        Ok(enc_password)
+        let pass_bytes = self.0.password.as_deref().unwrap_or("").as_bytes();
+        let enc_pass = base64::encode(public_key.encrypt(&mut rng, padding, pass_bytes)?);
+        Ok(enc_pass)
     }
 
-    pub(crate) fn to_value(self, key: RsaPublicKey) -> Result<Value> {
+    pub(crate) fn into_value(self, key: RsaPublicKey) -> Result<Value> {
         Ok(json!({
-        "username": self.user,
+        "username": self.0.user,
         "password": self.encrypt_password(key)?,
-        "driverName": &self.client_name,
-        "clientName": &self.client_name,
-        "clientVersion": self.client_version,
-        "clientOs": self.client_os,
+        "driverName": &self.0.client_name,
+        "clientName": &self.0.client_name,
+        "clientVersion": self.0.client_version,
+        "clientOs": self.0.client_os,
         "clientRuntime": "Rust",
-        "useCompression": self.use_compression,
+        "useCompression": self.0.use_compression,
         "attributes": {
-                    "currentSchema": self.schema,
-                    "autocommit": self.autocommit,
-                    "queryTimeout": self.query_timeout
+                    "currentSchema": self.0.schema,
+                    "autocommit": self.0.autocommit,
+                    "queryTimeout": self.0.query_timeout
                     }
         }))
     }

@@ -112,7 +112,11 @@
 //! let password = env::var("EXA_PASSWORD").unwrap();
 //!
 //! // Only providing fields for which we want custom values
-//! let opts = ConOpts {dsn, user, password, schema, autocommit: false, .. ConOpts::default()};
+//! let mut opts = ConOpts::new();
+//! opts.set_dsn(dsn);
+//! opts.set_user(user);
+//! opts.set_password(password);
+//! opts.set_schema(schema);
 //!
 //! let exa_con = Connection::new(opts).unwrap();
 //! ```
@@ -131,4 +135,4 @@ pub use crate::connection::{connect, Connection};
 pub use crate::params::{bind, SQLParam, SQLParamMap};
 pub use crate::query::{PreparedStatement, QueryResult, ResultSet};
 pub use crate::response::{Column, DataType};
-pub use crate::row::{deserialize_as_seq};
+pub use crate::row::deserialize_as_seq;

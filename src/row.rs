@@ -2,7 +2,7 @@ use crate::error::{Error, Result};
 use crate::response::Column;
 use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, Visitor};
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
-use serde_json::{Error as SJError, Value};
+use serde_json::{Error as SJError, Map, Value};
 use std::borrow::{Borrow, Cow};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
@@ -12,7 +12,6 @@ use std::vec::IntoIter;
 #[test]
 #[allow(dead_code)]
 fn deser_row() {
-    use serde::Deserialize;
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -34,7 +33,7 @@ fn deser_row() {
     ]
     );
 
-    let columns = serde_json::from_value(json_data).unwrap();
+    let columns: Vec<Column> = serde_json::from_value(json_data).unwrap();
 
     let data = json!(["val1", "val2"]);
     let data1 = data.as_array().unwrap().clone();
@@ -66,7 +65,7 @@ fn deser_row() {
 
     // Row variant can be chosen through internal tagging
     #[derive(Deserialize)]
-    #[serde(tag = "col1", rename_all = "camelCase")]
+    #[serde(tag = "col1", rename_all = "lowercase")]
     enum SomeRow4 {
         Val2 { col2: String },
         Val1 { col2: String },
@@ -105,12 +104,12 @@ fn deser_row() {
 /// This is only used internally to further deserialize it into a given Rust type.
 #[derive(Debug)]
 pub(crate) struct Row<'a> {
-    columns: &'a Vec<Column>,
+    columns: &'a [Column],
     data: Vec<Value>,
 }
 
 impl<'a> Row<'a> {
-    pub(crate) fn new(data: Vec<Value>, columns: &'a Vec<Column>) -> Self {
+    pub(crate) fn new(data: Vec<Value>, columns: &'a [Column]) -> Self {
         Self { columns, data }
     }
 }
@@ -403,25 +402,31 @@ where
     let val = serde_json::to_value(data)?;
 
     match val {
-        Value::Object(mut o) => columns
-            .iter()
-            .map(|c| {
-                o.remove(c)
-                    .ok_or(Error::DataError(format!("Data is missing column {}", c)))
-            })
-            .collect(),
-        Value::Array(a) => {
-            let num_cols = columns.len();
-
-            if num_cols > a.len() {
-                Err(Error::DataError("Not enough columns in data!".to_owned()))
-            } else {
-                Ok(a.into_iter().take(num_cols).collect())
-            }
-        }
+        Value::Object(mut o) => columns.iter().map(|c| take_map_value(&mut o, c)).collect(),
+        Value::Array(a) => take_arr_values(a, columns.len()),
         _ => Err(Error::DataError(
             "Data iterator items must deserialize to sequences or maps".to_owned(),
         )),
+    }
+}
+
+fn take_map_value<C>(map: &mut Map<String, Value>, col: &C) -> Result<Value>
+where
+    C: ?Sized + Hash + Ord + Display,
+    String: Borrow<C>,
+{
+    map.remove(col)
+        .ok_or_else(|| Error::DataError(format!("Data is missing column {}", col)))
+}
+
+fn take_arr_values(arr: Vec<Value>, len: usize) -> Result<Vec<Value>> {
+    let arr_len = arr.len();
+    match len > arr_len {
+        true => Err(Error::DataError(format!(
+            "Expecting {} data columns in array, found {}",
+            len, arr_len
+        ))),
+        false => Ok(arr.into_iter().take(arr_len).collect()),
     }
 }
 
@@ -455,62 +460,70 @@ impl Iterator for ColumnMajorIterator {
 /// # use serde_json::Value;
 /// # use serde::Deserialize;
 /// # use std::env;
-///
+/// #
 /// # let dsn = env::var("EXA_DSN").unwrap();
 /// # let schema = env::var("EXA_SCHEMA").unwrap();
 /// # let user = env::var("EXA_USER").unwrap();
 /// # let password = env::var("EXA_PASSWORD").unwrap();
+/// #
 /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-/// let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
+/// let result1 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
+/// let result2 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
+/// let result3 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
 ///
-///    // Default serde behaviour, which is external tagging, is not supported
-///    // and it doesn't even make sense in the context of a database row.
-///    #[derive(Deserialize)]
-///    #[serde(rename_all = "camelCase")]
-///    enum Val1 {
-///        Val2(String)
-///    }
+///  // Default serde behaviour, which is external tagging, is not supported
+///  // and it doesn't even make sense in the context of a database row.
+///  #[derive(Deserialize)]
+///  enum Val1 {
+///     Val2(String)
+///  }
 ///
-///    #[derive(Deserialize)]
-///    struct SomeRow1(String, String);
+///  #[derive(Deserialize)]
+///  struct SomeRow1(String, String);
 ///
-///    // Row variant can be chosen through internal tagging
-///    #[derive(Deserialize)]
-///    #[serde(tag = "col1", rename_all = "camelCase")]
-///    enum SomeRow2 {
-///        Val2 { col2: String },
-///        Val1 { col2: String }
-///    }
+///  // Row variant can be chosen through internal tagging
+///  #[derive(Deserialize)]
+///  #[serde(tag = "COL1", rename_all = "lowercase")]
+///  enum SomeRow2 {
+///  #[serde(rename_all = "UPPERCASE")]
+///     Val2 { col2: String },
+///  #[serde(rename_all = "UPPERCASE")]
+///     Val1 { col2: String }
+///  }
 ///
-///    // Untagged deserialization can also be employed
-///    #[derive(Deserialize)]
-///    #[serde(untagged)]
-///    enum SomeRow3 {
-///        // This variant won't be chosen due to data type,
-///        // but struct variants are perfectly fine, they just need
-///        // the custom deserialization mechanism
-///        #[serde(deserialize_with = "deserialize_as_seq")]
-///        SomeVar1(u8, u8),
-///        // commenting the line below results in an error when trying to
-///        // deserialize this variant, so the third variant will be attempted
-///        #[serde(deserialize_with = "deserialize_as_seq")]
-///        SomeVar2(SomeRow1),
-///        // Struct variants are map-like, so they can be deserialized right away
-///        SomeVar3{col1: String, col2: String},
-///        // And so can variants of a struct type, but the one above has order precedence
-///        SomeVar4(SomeRow2)
-///    }
+///  // Untagged deserialization can also be employed
+///  #[derive(Deserialize)]
+///  #[serde(untagged)]
+///  enum SomeRow3 {
+///     // This variant won't be chosen due to data type,
+///     // but struct variants are perfectly fine, they just need
+///     // the custom deserialization mechanism
+///     #[serde(deserialize_with = "deserialize_as_seq")]
+///     SomeVar1(u8, u8),
+///     // commenting the line below results in an error when trying to
+///     // deserialize this variant, so the third variant will be attempted
+///     #[serde(deserialize_with = "deserialize_as_seq")]
+///     SomeVar2(SomeRow1),
+///     // Struct variants are map-like, so they can be deserialized right away
+///     SomeVar3{col1: String, col2: String},
+///     // And so can variants of a struct type, but the one above has order precedence
+///     SomeVar4(SomeRow2)
+///  }
 ///
-/// if let QueryResult::ResultSet(r) = result {
-///     let result2 = r.clone().with_row_type::<SomeRow2>();
-///     let result3 = r.clone().with_row_type::<SomeRow3>();
+/// if let QueryResult::ResultSet(r) = result1 {
 ///     let result1 = r.with_row_type::<Val1>();
-///         
-///     // Due to the unsupported external tagging deserialization
-///     // this will error out
-///     let rows1 = result1.collect::<Result<Vec<Val1>>>().unwrap();
+///     // Due to the unsupported external tagging
+///     // deserialization this will error out:
+///     // let rows1 = result1.collect::<Result<Vec<Val1>>>().unwrap();
+/// }
+/// if let QueryResult::ResultSet(r) = result2 {
+///     let result2 = r.with_row_type::<SomeRow2>();
 ///     // But internal tagging works
 ///     let rows2 = result2.collect::<Result<Vec<SomeRow2>>>().unwrap();
+/// }
+///
+/// if let QueryResult::ResultSet(r) = result3 {
+///     let result3 = r.with_row_type::<SomeRow3>();
 ///     // And so does untagged deserialization
 ///     let rows3 = result3.collect::<Result<Vec<SomeRow3>>>().unwrap();
 ///  }

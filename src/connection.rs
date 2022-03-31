@@ -11,7 +11,7 @@ use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
-use crate::constants::{NOT_PONG, NO_RESPONSE_DATA, NO_RESULT_SET, WS_STR};
+use crate::constants::{NOT_PONG, NO_RESPONSE_DATA, NO_RESULT_SET};
 use crate::error::{ConnectionError, Error, RequestError, Result};
 use crate::query::{PreparedStatement, QueryResult};
 use crate::response::{Response, ResponseData};
@@ -30,13 +30,11 @@ use crate::response::{Response, ResponseData};
 /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 /// ```
 pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
-    let opts = ConOpts {
-        dsn: dsn.to_owned(),
-        schema: schema.to_owned(),
-        user: user.to_owned(),
-        password: password.to_owned(),
-        ..ConOpts::default()
-    };
+    let mut opts = ConOpts::new();
+    opts.set_dsn(dsn);
+    opts.set_user(user);
+    opts.set_password(password);
+    opts.set_schema(schema);
 
     Connection::new(opts)
 }
@@ -66,7 +64,12 @@ impl Connection {
     /// let user = env::var("EXA_USER").unwrap();
     /// let password = env::var("EXA_PASSWORD").unwrap();
     ///
-    /// let opts = ConOpts {dsn, user, password, schema, ..ConOpts::default()};
+    /// let mut opts = ConOpts::new();
+    /// opts.set_dsn(dsn);
+    /// opts.set_user(user);
+    /// opts.set_password(password);
+    /// opts.set_schema(schema);
+    ///
     /// let mut exa_con = Connection::new(opts).unwrap();
     /// ```
     pub fn new(opts: ConOpts) -> Result<Connection> {
@@ -122,14 +125,14 @@ impl Connection {
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let queries = vec!["SELECT 3", "SELECT 4"];
     /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
-    /// let queries = vec!["SELECT 3", "DELETE * FROM DIM_SIMPLE_DATE WHERE 1=2"];
+    /// let queries = vec!["SELECT 3", "DELETE * FROM EXA_RUST_TEST WHERE 1=2"];
     /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
     /// ```
     pub fn execute_batch<T>(&mut self, queries: &[T]) -> Result<Vec<QueryResult>>
     where
         T: AsRef<str> + Serialize,
     {
-        (*self.con).borrow_mut().execute_batch(&self.con, &queries)
+        (*self.con).borrow_mut().execute_batch(&self.con, queries)
     }
 
     /// Creates a prepared statement of type [PreparedStatement].
@@ -269,25 +272,23 @@ impl Connection {
 pub(crate) struct ConnectionImpl {
     attr: HashMap<String, Value>,
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
+    send: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>, Value) -> Result<()>,
+    recv: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<Response>,
 }
 
 impl Drop for ConnectionImpl {
     /// Implementing drop to properly get rid of the connection and its components
+    #[allow(unused)]
     fn drop(&mut self) {
         // Closing session on Exasol side
-        self.do_request(json!({"command": "disconnect"})).ok();
+        self.do_request(json!({"command": "disconnect"}));
 
         // Sending Message::Close frame
-        self.ws.close(None).ok();
+        self.ws.close(None);
 
         // Reading the response sent by the server until Error:ConnectionClosed occurs.
         // We should typically get a Message::Close frame and then the error.
-        loop {
-            match self.ws.read_message().ok() {
-                Some(_) => {}
-                None => break,
-            };
-        }
+        while self.ws.read_message().is_ok() {}
 
         // It is now safe to drop the socket
     }
@@ -317,6 +318,7 @@ impl ConnectionImpl {
     /// an error is returned.
     pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
         let addresses = opts.parse_dsn()?;
+        let ws_prefix = opts.get_ws_prefix();
         let mut try_count = addresses.len();
         let mut addr_iter = addresses.into_iter();
 
@@ -324,13 +326,13 @@ impl ConnectionImpl {
             try_count -= 1;
 
             if let Some(addr) = addr_iter.next() {
-                let url = format!("{}://{}", WS_STR, addr);
+                let url = format!("{}://{}", ws_prefix, addr);
                 let res = Self::create_websocket(&url);
 
                 match res {
                     Ok(ws) => break Ok(ws),
                     Err(e) => {
-                        if try_count <= 0 {
+                        if try_count == 0 {
                             break Err(e);
                         }
                     }
@@ -340,15 +342,29 @@ impl ConnectionImpl {
             }
         }?;
 
-        let mut con = ConnectionImpl {
+        let attr = HashMap::new();
+        let mut con = Self {
             ws,
-            attr: HashMap::new(),
+            attr,
+            send,
+            recv,
         };
 
-        con.login(opts)?;
-        con.get_con_attr()?;
+        #[cfg(feature = "flate2")]
+        let compress = opts.get_compression();
 
-        return Ok(con);
+        // Login must always be uncompressed
+        con.login(opts)?;
+
+        // Setting compression functions if needed
+        #[cfg(feature = "flate2")]
+        if compress {
+            con.send = compressed_send;
+            con.recv = compressed_recv;
+        }
+
+        con.get_con_attr()?;
+        Ok(con)
     }
 
     /// Sends an setAttributes request to Exasol
@@ -444,7 +460,8 @@ impl ConnectionImpl {
 
     /// Returns response data from a request
     pub(crate) fn get_resp_data(&mut self, payload: Value) -> Result<ResponseData> {
-        self.do_request(payload)?.ok_or(NO_RESPONSE_DATA.into())
+        self.do_request(payload)?
+            .ok_or_else(|| NO_RESPONSE_DATA.into())
     }
 
     /// Sends a request and waits for its response
@@ -466,14 +483,6 @@ impl ConnectionImpl {
         self.attr.insert(attr_name, val);
     }
 
-    /// Attempts to create a websocket for the given URL
-    fn create_websocket(url: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>> {
-        Url::parse(&url)
-            .map_err(From::from)
-            .and_then(|u| tungstenite::connect(u).map_err(From::from))
-            .and_then(|(ws, _)| Ok(ws))
-    }
-
     /// Gets the database results as [crate::query_result::Results]
     /// (that's what they deserialize into) and consumes them
     /// to return a usable vector of [QueryResult] enums.
@@ -487,6 +496,22 @@ impl ConnectionImpl {
             .and_then(|r| r.try_to_query_results(con_impl))
     }
 
+    fn send(&mut self, payload: Value) -> Result<()> {
+        (self.send)(&mut self.ws, payload)
+    }
+
+    fn recv(&mut self) -> Result<Response> {
+        (self.recv)(&mut self.ws)
+    }
+
+    /// Attempts to create a websocket for the given URL
+    fn create_websocket(url: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>> {
+        Url::parse(url)
+            .map_err(From::from)
+            .and_then(|u| tungstenite::connect(u).map_err(From::from))
+            .map(|(ws, _)| ws)
+    }
+
     /// Gets connection attributes from Exasol
     fn get_con_attr(&mut self) -> Result<()> {
         let payload = json!({"command": "getAttributes"});
@@ -494,26 +519,9 @@ impl ConnectionImpl {
         Ok(())
     }
 
-    /// Converts JSON payload to string and writes message to websocket
-    fn send(&mut self, payload: Value) -> Result<()> {
-        Ok(self.ws.write_message(Message::Text(payload.to_string()))?)
-    }
-
-    /// We're only interested in getting Text or Binary messages
-    /// The rest, such as Pong, can be discarded until we're replied with one of the above
-    fn recv(&mut self) -> Result<Response> {
-        loop {
-            break match self.ws.read_message()? {
-                Message::Text(resp) => Ok(serde_json::from_str::<Response>(&resp)?),
-                Message::Binary(resp) => Ok(serde_json::from_slice::<Response>(&resp)?),
-                _ => continue,
-            };
-        }
-    }
-
     /// Gets the public key from Exasol
     /// Used during authentication for encrypting the password
-    fn get_public_key(&mut self, protocol_version: &ProtocolVersion) -> Result<RsaPublicKey> {
+    fn get_public_key(&mut self, protocol_version: ProtocolVersion) -> Result<RsaPublicKey> {
         let payload = json!({"command": "login", "protocolVersion": protocol_version});
 
         let pem = self
@@ -527,11 +535,11 @@ impl ConnectionImpl {
     /// Called after the websocket is established
     fn login(&mut self, opts: ConOpts) -> Result<()> {
         // Retain the result set fetch size in bytes
-        self.set_attr("fetch_size".to_owned(), json!(opts.fetch_size));
+        self.set_attr("fetch_size".to_owned(), json!(opts.get_fetch_size()));
 
         // Encrypt password using server's public key
-        let key = self.get_public_key(&opts.protocol_version)?;
-        let payload = opts.to_value(key)?;
+        let key = self.get_public_key(opts.get_protocol_version())?;
+        let payload = opts.into_value(key)?;
 
         self.do_request(payload).map_err(|e| match e {
             Error::RequestError(RequestError::ExaError(err)) => {
@@ -541,5 +549,45 @@ impl ConnectionImpl {
         })?;
 
         Ok(())
+    }
+}
+
+// Websocket communication functions, regular and compressed.
+fn send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value) -> Result<()> {
+    Ok(ws.write_message(Message::Text(payload.to_string()))?)
+}
+
+fn recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<Response> {
+    loop {
+        break match ws.read_message()? {
+            Message::Text(resp) => Ok(serde_json::from_str::<Response>(&resp)?),
+            Message::Binary(resp) => Ok(serde_json::from_slice::<Response>(&resp)?),
+            _ => continue,
+        };
+    }
+}
+
+#[cfg(feature = "flate2")]
+use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+#[cfg(feature = "flate2")]
+use std::io::Write;
+
+#[cfg(feature = "flate2")]
+fn compressed_send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value) -> Result<()> {
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(payload.to_string().as_bytes())?;
+    Ok(ws.write_message(Message::Binary(enc.finish()?))?)
+}
+
+#[cfg(feature = "flate2")]
+fn compressed_recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<Response> {
+    loop {
+        break match ws.read_message()? {
+            Message::Text(resp) => Ok(serde_json::from_reader(ZlibDecoder::new(resp.as_bytes()))?),
+            Message::Binary(resp) => {
+                Ok(serde_json::from_reader(ZlibDecoder::new(resp.as_slice()))?)
+            }
+            _ => continue,
+        };
     }
 }

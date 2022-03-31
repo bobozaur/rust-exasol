@@ -1,4 +1,4 @@
 /target
 Cargo.lock
 .idea
-env_setup.sh
+env_setup.ps1

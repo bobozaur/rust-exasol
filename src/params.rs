@@ -142,7 +142,7 @@ where
 
 /// Used for transposing a string to an escaped SQL parameter
 fn param_str(s: &str) -> String {
-    format!("'{}'", s.replace("'", "''"))
+    format!("'{}'", s.replace('\'', "''"))
 }
 
 /// Used for transposing a bool to an SQL parameter
@@ -199,7 +199,7 @@ impl SQLParam for &str {
 /// ```
 impl SQLParam for String {
     fn to_sql_param(&self) -> String {
-        param_str(&self)
+        param_str(self)
     }
 }
 /// ```
@@ -383,7 +383,7 @@ impl SQLParam for Value {
     fn to_sql_param(&self) -> String {
         match self {
             Value::Null => "NULL".to_owned(),
-            Value::String(s) => param_str(&s),
+            Value::String(s) => param_str(s),
             Value::Number(n) => n.to_string(),
             Value::Bool(b) => param_bool(*b),
             Value::Array(a) => param_array(a),
