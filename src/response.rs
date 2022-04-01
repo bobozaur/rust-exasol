@@ -55,6 +55,7 @@ pub(crate) enum ResponseData {
 
 impl ResponseData {
     /// Attempts to convert this struct to a [Vec<QueryResult>].
+    #[inline]
     pub(crate) fn try_to_query_results(
         self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
@@ -68,6 +69,7 @@ impl ResponseData {
     }
 
     /// Attempts to convert this struct to a [PreparedStatement].
+    #[inline]
     pub(crate) fn try_to_prepared_stmt(
         self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
@@ -82,6 +84,7 @@ impl ResponseData {
     }
 
     /// Attempts to convert this struct to a [FetchedData].
+    #[inline]
     pub(crate) fn try_to_fetched_data(self) -> Result<FetchedData> {
         match self {
             Self::FetchedData(d) => Ok(d),
@@ -90,6 +93,7 @@ impl ResponseData {
     }
 
     /// Attempts to convert this struct to a [String] representing the public key.
+    #[inline]
     pub(crate) fn try_to_public_key_string(self) -> Result<String> {
         match self {
             Self::PublicKey(p) => Ok(p.into()),

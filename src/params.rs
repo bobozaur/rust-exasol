@@ -77,6 +77,7 @@ where
 }
 
 /// Processes input [Value] into parameters and binds them to the query.
+#[inline]
 fn parametrize_query(query: &str, val: Value) -> BindResult {
     match val {
         Value::Object(o) => bind_map_params(query, gen_map_params(o)),
@@ -136,6 +137,7 @@ fn bind_seq_params(query: &str, arr: Vec<String>) -> BindResult {
 }
 
 /// Generates a `HashMap<String, String>` of the params SQL representation.
+#[inline]
 fn gen_map_params(params: Map<String, Value>) -> HashMap<String, String> {
     params
         .into_iter()
@@ -144,11 +146,13 @@ fn gen_map_params(params: Map<String, Value>) -> HashMap<String, String> {
 }
 
 /// Generates a `Vec<String>` of the params SQL representation.
+#[inline]
 fn gen_seq_params(params: Vec<Value>) -> Vec<String> {
     params.into_iter().map( into_sql_param).collect()
 }
 
 /// Will treat Value variants that are not Array or Object as a single element Vec.
+#[inline]
 fn gen_single_param(param: Value) -> Vec<String> {
     vec![into_sql_param(param)]
 }

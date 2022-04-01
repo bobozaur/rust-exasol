@@ -396,6 +396,7 @@ where
     Ok(ColumnMajorIterator(iter_data).collect::<Vec<Vec<Value>>>())
 }
 
+#[inline]
 fn to_seq_iter<C, S>(data: S, columns: &[&C]) -> DataResult<Vec<Value>>
 where
     S: Serialize,
@@ -411,6 +412,7 @@ where
     }
 }
 
+#[inline]
 fn take_map_value<C>(map: &mut Map<String, Value>, col: &C) -> DataResult<Value>
 where
     C: ?Sized + Hash + Ord + Display,
@@ -420,6 +422,7 @@ where
         .ok_or_else(|| DataError::MissingColumn(col.to_string()))
 }
 
+#[inline]
 fn take_arr_values(arr: Vec<Value>, len: usize) -> DataResult<Vec<Value>> {
     let arr_len = arr.len();
     match len > arr_len {

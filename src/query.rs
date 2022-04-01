@@ -31,6 +31,8 @@ impl Debug for QueryResult {
 
 impl TryFrom<QueryResult> for ResultSet {
     type Error = ConversionError;
+
+    #[inline]
     fn try_from(value: QueryResult) -> std::result::Result<Self, Self::Error> {
         match value {
             QueryResult::ResultSet(r) => Ok(r),
@@ -41,6 +43,8 @@ impl TryFrom<QueryResult> for ResultSet {
 
 impl TryFrom<QueryResult> for u32 {
     type Error = ConversionError;
+
+    #[inline]
     fn try_from(value: QueryResult) -> std::result::Result<Self, Self::Error> {
         match value {
             QueryResult::RowCount(r) => Ok(r),
@@ -50,6 +54,7 @@ impl TryFrom<QueryResult> for u32 {
 }
 
 impl QueryResult {
+    #[inline]
     pub(crate) fn from_de(
         query_result: QueryResultDe,
         con_rc: &Rc<RefCell<ConnectionImpl>>,
@@ -129,16 +134,19 @@ where
     T: DeserializeOwned,
 {
     /// Returns a reference to a [Vec<Column>] of the result set columns.
+    #[inline]
     pub fn columns(&self) -> &Vec<Column> {
         &self.columns
     }
 
     /// Returns the number of columns in the result set.
+    #[inline]
     pub fn num_columns(&self) -> &u8 {
         &self.num_columns
     }
 
     /// Returns the number of rows in the result set.
+    #[inline]
     pub fn num_rows(&self) -> &u32 {
         &self.total_rows_num
     }
@@ -209,6 +217,7 @@ where
         }
     }
 
+    #[inline]
     fn next_row(&mut self) -> Option<Result<T>> {
         self.data_iter.next().map(|r| {
             Ok(T::deserialize(Row::new(r, &self.columns))
@@ -220,6 +229,7 @@ where
     /// Closes the result set if it wasn't already closed
     /// This method gets called when a [ResultSet] is fully iterated over
     /// but also when the [ResultSet] is dropped.
+    #[inline]
     fn close(&mut self) -> Result<()> {
         self.result_set_handle.map_or(Ok(()), |h| {
             if !self.is_closed {
@@ -351,6 +361,7 @@ impl PreparedStatement {
             .exec_and_get_first(&self.connection, payload)
     }
 
+    #[inline]
     pub fn close(&mut self) -> Result<()> {
         (*self.connection)
             .borrow_mut()

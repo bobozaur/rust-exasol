@@ -13,6 +13,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl TryFrom<Response> for (Option<ResponseData>, Option<Attributes>) {
     type Error = Error;
 
+    #[inline]
     fn try_from(resp: Response) -> Result<Self> {
         match resp {
             Response::Ok {

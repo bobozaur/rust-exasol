@@ -80,6 +80,7 @@ impl Connection {
     ///
     /// let mut exa_con = Connection::new(opts).unwrap();
     /// ```
+    #[inline]
     pub fn new(opts: ConOpts) -> Result<Connection> {
         Ok(Connection {
             con: Rc::new(RefCell::new(ConnectionImpl::new(opts)?)),
@@ -111,6 +112,7 @@ impl Connection {
     ///         }
     ///     }
     /// ```
+    #[inline]
     pub fn execute<T>(&mut self, query: T) -> Result<QueryResult>
     where
         T: AsRef<str> + Serialize,
@@ -136,6 +138,7 @@ impl Connection {
     /// let queries = vec!["SELECT 3", "DELETE * FROM EXA_RUST_TEST WHERE 1=2"];
     /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
     /// ```
+    #[inline]
     pub fn execute_batch<T>(&mut self, queries: &[T]) -> Result<Vec<QueryResult>>
     where
         T: AsRef<str> + Serialize,
@@ -160,6 +163,7 @@ impl Connection {
     /// let data = vec![vec![json!(1)]];
     /// prepared_stmt.execute(&data).unwrap();
     /// ```
+    #[inline]
     pub fn prepare<T>(&mut self, query: T) -> Result<PreparedStatement>
     where
         T: AsRef<str> + Serialize,
@@ -181,6 +185,7 @@ impl Connection {
     /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.ping().unwrap();
     /// ```
+    #[inline]
     pub fn ping(&mut self) -> Result<()> {
         Ok((*self.con)
             .borrow_mut()
@@ -202,6 +207,7 @@ impl Connection {
     /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_autocommit(false).unwrap();
     /// ```
+    #[inline]
     pub fn set_autocommit(&mut self, val: bool) -> Result<()> {
         let payload = json!({ "autocommit": val });
         self.set_attributes(payload)
@@ -221,6 +227,7 @@ impl Connection {
     /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_query_timeout(60).unwrap();
     /// ```
+    #[inline]
     pub fn set_query_timeout(&mut self, val: usize) -> Result<()> {
         let payload = json!({ "queryTimeout": val });
         self.set_attributes(payload)
@@ -241,6 +248,7 @@ impl Connection {
     /// // Size is in bytes
     /// exa_con.set_fetch_size(2 * 1024 * 1024).unwrap();
     /// ```
+    #[inline]
     pub fn set_fetch_size(&mut self, val: usize) -> Result<()> {
         (*self.con)
             .borrow_mut()
@@ -263,12 +271,14 @@ impl Connection {
     /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// exa_con.set_schema(&schema).unwrap();
     /// ```
+    #[inline]
     pub fn set_schema(&mut self, schema: &str) -> Result<()> {
         let payload = json!({ "currentSchema": schema });
         self.set_attributes(payload)
     }
 
     /// Sets connection attributes
+    #[inline]
     fn set_attributes(&mut self, attr: Value) -> Result<()> {
         (*self.con).borrow_mut().set_con_attr(attr)
     }
@@ -426,6 +436,7 @@ impl ConnectionImpl {
     }
 
     /// Closes a result set
+    #[inline]
     pub(crate) fn close_result_set(&mut self, handle: u16) -> Result<()> {
         let payload = json!({"command": "closeResultSet", "resultSetHandles": [handle]});
         self.do_request(payload)?;
@@ -433,6 +444,7 @@ impl ConnectionImpl {
     }
 
     /// Closes a prepared statement
+    #[inline]
     pub(crate) fn close_prepared_stmt(&mut self, handle: usize) -> Result<()> {
         let payload = json!({"command": "closePreparedStatement", "statementHandle": handle});
         self.do_request(payload)?;
@@ -471,11 +483,13 @@ impl ConnectionImpl {
     }
 
     /// Gets an attribute from the internal map
+    #[inline]
     pub(crate) fn get_attr(&mut self, attr_name: &str) -> Option<&Value> {
         self.attr.get(attr_name)
     }
 
     /// Stores an attribute in the internal map
+    #[inline]
     pub(crate) fn set_attr(&mut self, attr_name: String, val: Value) {
         self.attr.insert(attr_name, val);
     }
@@ -492,10 +506,12 @@ impl ConnectionImpl {
             .and_then(|r| r.try_to_query_results(con_impl))
     }
 
+    #[inline]
     fn send(&mut self, payload: Value) -> ReqResult<()> {
         (self.send)(&mut self.ws, payload)
     }
 
+    #[inline]
     fn recv(&mut self) -> ReqResult<Response> {
         (self.recv)(&mut self.ws)
     }
@@ -573,10 +589,12 @@ impl ConnectionImpl {
 }
 
 // Websocket communication functions, regular and compressed.
+#[inline]
 fn send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value) -> ReqResult<()> {
     Ok(ws.write_message(Message::Text(payload.to_string()))?)
 }
 
+#[inline]
 fn recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response> {
     loop {
         break match ws.read_message()? {
@@ -587,6 +605,7 @@ fn recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response> {
     }
 }
 
+#[inline]
 #[cfg(feature = "flate2")]
 fn compressed_send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value) -> ReqResult<()> {
     let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
@@ -594,6 +613,7 @@ fn compressed_send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value
     Ok(ws.write_message(Message::Binary(enc.finish()?))?)
 }
 
+#[inline]
 #[cfg(feature = "flate2")]
 fn compressed_recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response> {
     loop {

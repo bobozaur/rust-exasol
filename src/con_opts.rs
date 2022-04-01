@@ -189,10 +189,12 @@ impl ConOpts {
     }
 
     /// DSN (defaults to `None`)
+    #[inline]
     pub fn get_dsn(&self) -> Option<&str> {
         self.0.dsn.as_deref()
     }
 
+    #[inline]
     pub fn set_dsn<T>(&mut self, dsn: T)
     where
         T: Into<String>,
@@ -201,19 +203,23 @@ impl ConOpts {
     }
 
     /// Port (defaults to `8563`).
+    #[inline]
     pub fn get_port(&self) -> u16 {
         self.0.port
     }
 
+    #[inline]
     pub fn set_port(&mut self, port: u16) {
         self.0.port = port
     }
 
     /// Schema (defaults to `None`).
+    #[inline]
     pub fn get_schema(&self) -> Option<&str> {
         self.0.schema.as_deref()
     }
 
+    #[inline]
     pub fn set_schema<T>(&mut self, schema: T)
     where
         T: Into<String>,
@@ -222,10 +228,12 @@ impl ConOpts {
     }
 
     /// User (defaults to `None`).
+    #[inline]
     pub fn get_user(&self) -> Option<&str> {
         self.0.user.as_deref()
     }
 
+    #[inline]
     pub fn set_user<T>(&mut self, user: T)
     where
         T: Into<String>,
@@ -234,10 +242,12 @@ impl ConOpts {
     }
 
     /// Password (defaults to `None`).
+    #[inline]
     pub fn get_password(&self) -> Option<&str> {
         self.0.password.as_deref()
     }
 
+    #[inline]
     pub fn set_password<T>(&mut self, password: T)
     where
         T: Into<String>,
@@ -246,37 +256,45 @@ impl ConOpts {
     }
 
     /// Protocol Version (defaults to `ProtocolVersion::V3`).
+    #[inline]
     pub fn get_protocol_version(&self) -> ProtocolVersion {
         self.0.protocol_version
     }
 
+    #[inline]
     pub fn set_protocol_version(&mut self, pv: ProtocolVersion) {
         self.0.protocol_version = pv
     }
 
     /// Data fetch size in bytes (defaults to `5,242,880 = 5 * 1024 * 1024`).
+    #[inline]
     pub fn get_fetch_size(&self) -> u32 {
         self.0.fetch_size
     }
 
+    #[inline]
     pub fn set_fetch_size(&mut self, fetch_size: u32) {
         self.0.fetch_size = fetch_size
     }
 
     /// Query timeout (defaults to `0`, which means it's disabled).
+    #[inline]
     pub fn get_query_timeout(&self) -> u32 {
         self.0.query_timeout
     }
 
+    #[inline]
     pub fn set_query_timeout(&mut self, timeout: u32) {
         self.0.query_timeout = timeout
     }
 
     /// Encryption flag (defaults to `false`).
+    #[inline]
     pub fn get_encryption(&self) -> bool {
         self.0.use_encryption
     }
     /// Sets encryption by allowing the use of a secure websocket (WSS).
+    #[inline]
     #[cfg(any(feature = "native-tls", feature = "rustls"))]
     pub fn set_encryption(&mut self, flag: bool) {
         self.0.use_encryption = flag
@@ -288,11 +306,13 @@ impl ConOpts {
     }
 
     /// Compression flag (defaults to `false`).
+    #[inline]
     pub fn get_compression(&self) -> bool {
         self.0.use_compression
     }
 
     /// Sets the compression flag.
+    #[inline]
     #[cfg(feature = "flate2")]
     pub fn set_compression(&mut self, flag: bool) {
         self.0.use_compression = flag
@@ -304,16 +324,19 @@ impl ConOpts {
     }
 
     /// Autocommit flag (defaults to `true`).
+    #[inline]
     pub fn get_autocommit(&self) -> bool {
         self.0.autocommit
     }
 
     /// Sets the autocommit flag
+    #[inline]
     pub fn set_autocommit(&mut self, flag: bool) {
         self.0.autocommit = flag
     }
 
     /// Convenience method for determining the websocket type.
+    #[inline]
     pub(crate) fn get_ws_prefix(&self) -> &str {
         match self.get_encryption() {
             false => "ws",
@@ -425,6 +448,7 @@ impl ConOpts {
     }
 
     /// Used for retrieving an optional DSN part, or an empty string if missing
+    #[inline]
     fn get_dsn_part<'a>(cap: &'a Captures, index: usize) -> &'a str {
         cap.get(index).map_or("", |s| s.as_str())
     }
