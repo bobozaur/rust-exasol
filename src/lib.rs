@@ -121,6 +121,8 @@
 //! let exa_con = Connection::new(opts).unwrap();
 //! ```
 
+extern crate core;
+
 pub mod con_opts;
 pub mod connection;
 pub mod error;

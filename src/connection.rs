@@ -328,8 +328,7 @@ impl ConnectionImpl {
     /// If all options were exhausted and a connection could not be established
     /// an error is returned.
     pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
-        let ws =
-            Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
+        let ws = Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
         let attr = HashMap::new();
         let mut con = Self {
             ws,
@@ -565,9 +564,7 @@ impl ConnectionImpl {
 
         // Encrypt password using server's public key
         let key = self.get_public_key(opts.get_protocol_version())?;
-        let payload = opts
-            .into_value(key)
-            .map_err(DriverError::ConnectionError)?;
+        let payload = opts.into_value(key).map_err(DriverError::ConnectionError)?;
 
         // Send login request
         self.do_request(payload)?;

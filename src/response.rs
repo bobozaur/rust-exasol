@@ -61,7 +61,9 @@ impl ResponseData {
     ) -> Result<Vec<QueryResult>> {
         match self {
             Self::Results(res) => Ok(res.into_query_results(con_impl)),
-            _ => Err(DriverError::RequestError(RequestError::InvalidResponse("query results")).into()),
+            _ => Err(
+                DriverError::RequestError(RequestError::InvalidResponse("query results")).into(),
+            ),
         }
     }
 
@@ -72,7 +74,10 @@ impl ResponseData {
     ) -> Result<PreparedStatement> {
         match self {
             Self::PreparedStatement(res) => Ok(PreparedStatement::from_de(res, con_impl)),
-            _ => Err(DriverError::RequestError(RequestError::InvalidResponse("prepared statement")).into()),
+            _ => Err(DriverError::RequestError(RequestError::InvalidResponse(
+                "prepared statement",
+            ))
+            .into()),
         }
     }
 

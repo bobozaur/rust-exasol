@@ -1,6 +1,6 @@
 use crate::error::DataError;
 use crate::response::Column;
-use serde::de::{DeserializeSeed, IntoDeserializer, MapAccess, Visitor, Error as SError};
+use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, Visitor};
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
 use serde_json::{Error, Map, Value};
 use std::borrow::{Borrow, Cow};
@@ -543,10 +543,7 @@ where
             write!(formatter, "A map-like type")
         }
 
-        fn visit_map<A>(
-            self,
-            mut map: A,
-        ) -> std::result::Result<Self::Value, A::Error>
+        fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
         where
             A: MapAccess<'de>,
         {
@@ -560,7 +557,8 @@ where
                 }
             }
             let val = Value::Array(seq);
-            Self::Value::deserialize(val.into_deserializer()).map_err(|_| A::Error::custom("Cannot deserialize type as sequence"))
+            Self::Value::deserialize(val.into_deserializer())
+                .map_err(|_| A::Error::custom("Cannot deserialize type as sequence"))
         }
     }
     deserializer.deserialize_map(SequenceVisitor(PhantomData))
