@@ -45,8 +45,9 @@
 //! Keeping in mind that the result set is an iterator when owned,
 //! the full iterator toolset can be used.
 //!
-//! Additionally, `TryFrom` is implemented for [QueryResult] to make [ResultSet] retrieval
-//! more convenient (the same can be done for the u32 representing affected rows count).
+//! Additionally, `TryFrom` is implemented for [QueryResult](crate::query::QueryResult) to make
+//! [ResultSet](crate::query::ResultSet) retrieval more convenient
+//! (the same can be done for the u32 representing affected rows count).
 //!
 //! ```
 //! # use exasol::error::Result;
@@ -70,7 +71,6 @@
 //!     .into_iter()
 //!     .map(|row| row[0].as_str().unwrap().to_owned())
 //!     .collect();
-//! }
 //! ```
 //!
 //! In the example above, note the `.collect::<Result<Vec<Row>>>()` call.
@@ -84,7 +84,7 @@
 //!
 //! The crate implements a custom deserializer, which is a trimmed down specialized version
 //! of the `serde_json` deserializer.
-//! Database row deserialization can be attempted to any type implementing [Deserialize].
+//! Database row deserialization can be attempted to any type implementing [Deserialize](serde::Deserialize).
 //! This is thanks to the magic of `serde`.
 //!
 //! Map-like types are natively deserialized.
@@ -111,13 +111,12 @@
 //! // on the same result set, even while iterating through it
 //! let mut result_set = result_set.with_row_type::<Vec<String>>();
 //! let row2 = result_set.next();
-//! }
 //! ```
 //!
 //! # Parameter binding
 //!
 //! Queries can be composed by binding named or positional parameters to them through the [bind] function.
-//! The function takes a string and a type implementing the [Serialize] trait.
+//! The function takes a string and a type implementing the [Serialize](serde::Serialize) trait.
 //! The second argument must serialize to a sequence or map.
 //!
 //! ```

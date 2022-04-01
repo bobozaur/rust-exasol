@@ -78,7 +78,7 @@ pub enum DataError {
     TypeParseError(#[from] serde_json::error::Error),
 }
 
-/// Conversion errors from [QueryResult] to its variants.
+/// Conversion errors from [QueryResult](crate::query::QueryResult) to its variants.
 #[derive(Debug, ThisError)]
 pub enum ConversionError {
     #[error("Not a result set")]

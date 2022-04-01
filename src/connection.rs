@@ -233,7 +233,7 @@ impl Connection {
         self.set_attributes(payload)
     }
 
-    /// Sets the fetch size in bytes when retrieving [ResultSet] chunks
+    /// Sets the fetch size in bytes when retrieving [ResultSet](crate::query::ResultSet) chunks
     ///
     /// ```
     /// # use exasol::connect;
