@@ -1,6 +1,5 @@
 # exasol
-A synchronous database connector for Exasol written in Rust, based on the Exasol [Websocket API](https://github.com/exasol/websocket-api).
-Inspired by [Py-Exasol](https://github.com/exasol/pyexasol).
+A synchronous database connector for Exasol written in Rust, based on the Exasol [Websocket API](https://github.com/exasol/websocket-api).  Inspired by [Py-Exasol](https://github.com/exasol/pyexasol).
 
 Please find the documentation [here](https://docs.rs/exasol/latest/exasol/).
 
