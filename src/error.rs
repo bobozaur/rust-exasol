@@ -40,8 +40,8 @@ pub enum Error {
 /// making requests, processing responses, etc.
 #[derive(Debug, ThisError)]
 pub enum DriverError {
-    #[error("Missing parameter to bind for {0}")]
-    BindError(String),
+    #[error(transparent)]
+    BindError(#[from] BindError),
     #[error(transparent)]
     DataError(#[from] DataError),
     #[error(transparent)]
@@ -50,6 +50,16 @@ pub enum DriverError {
     RequestError(#[from] RequestError),
     #[error(transparent)]
     ConnectionError(#[from] ConnectionError),
+}
+
+#[derive(Debug, ThisError)]
+pub enum BindError {
+    #[error("Missing parameter to bind for {0}")]
+    MappingError(String),
+    #[error(transparent)]
+    DeserError(#[from] serde_json::error::Error),
+    #[error(transparent)]
+    ParseIntError(#[from] ParseIntError)
 }
 
 /// Data processing related errors.
