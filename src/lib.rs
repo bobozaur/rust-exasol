@@ -123,7 +123,6 @@
 
 pub mod con_opts;
 pub mod connection;
-mod constants;
 pub mod error;
 pub mod params;
 pub mod query;

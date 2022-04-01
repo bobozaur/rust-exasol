@@ -5,8 +5,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 use crate::con_opts::ProtocolVersion;
-use crate::constants::{MISSING_DATA, NO_PUBLIC_KEY, NO_RESPONSE_DATA};
-use crate::error::Result;
+use crate::error::{DriverError, RequestError, Result};
 use serde::de::{DeserializeSeed, Error, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
@@ -62,7 +61,7 @@ impl ResponseData {
     ) -> Result<Vec<QueryResult>> {
         match self {
             Self::Results(res) => Ok(res.into_query_results(con_impl)),
-            _ => Err(NO_RESPONSE_DATA.into()),
+            _ => Err(DriverError::RequestError(RequestError::InvalidResponse("query results")).into()),
         }
     }
 
@@ -73,7 +72,7 @@ impl ResponseData {
     ) -> Result<PreparedStatement> {
         match self {
             Self::PreparedStatement(res) => Ok(PreparedStatement::from_de(res, con_impl)),
-            _ => Err(NO_RESPONSE_DATA.into()),
+            _ => Err(DriverError::RequestError(RequestError::InvalidResponse("prepared statement")).into()),
         }
     }
 
@@ -81,7 +80,7 @@ impl ResponseData {
     pub(crate) fn try_to_fetched_data(self) -> Result<FetchedData> {
         match self {
             Self::FetchedData(d) => Ok(d),
-            _ => Err(MISSING_DATA.into()),
+            _ => Err(DriverError::RequestError(RequestError::InvalidResponse("data chunk")).into()),
         }
     }
 
@@ -89,7 +88,7 @@ impl ResponseData {
     pub(crate) fn try_to_public_key_string(self) -> Result<String> {
         match self {
             Self::PublicKey(p) => Ok(p.into()),
-            _ => Err(NO_PUBLIC_KEY.into()),
+            _ => Err(DriverError::RequestError(RequestError::InvalidResponse("public key")).into()),
         }
     }
 }
@@ -107,6 +106,8 @@ fn deserialize_error() {
 
 /// Generic struct containing the response fields
 /// returned by Exasol in case of an error.
+///
+/// These errors are directly issued by the Exasol database.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ExaError {
     text: String,
@@ -619,7 +620,7 @@ fn to_row_major<'de, D: Deserializer<'de>>(
             A: SeqAccess<'de>,
         {
             let mut transposed = Vec::new();
-            // Do first iteration to create and push inner Vec's into the one declared above.
+            // Do first iteration to create and push inner Vecs into the one declared above.
             seq.next_element_seed(FirstColumn(&mut transposed))?;
             // Then keep appending to these vectors
             // already created in outer vec while there's data

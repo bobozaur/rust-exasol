@@ -1,6 +1,5 @@
 use crate::connection::ConnectionImpl;
-use crate::constants::{DUMMY_COLUMNS_NUM, DUMMY_COLUMNS_VEC};
-use crate::error::{RequestError, Result};
+use crate::error::{ConversionError, DataError, DriverError, RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResultSetDe};
 use crate::response::{ParameterData, PreparedStatementDe};
 use crate::row::{to_col_major, Row};
@@ -31,21 +30,21 @@ impl Debug for QueryResult {
 }
 
 impl TryFrom<QueryResult> for ResultSet {
-    type Error = ();
+    type Error = ConversionError;
     fn try_from(value: QueryResult) -> std::result::Result<Self, Self::Error> {
         match value {
             QueryResult::ResultSet(r) => Ok(r),
-            _ => Err(())
+            _ => Err(ConversionError::ResultSetError),
         }
     }
 }
 
 impl TryFrom<QueryResult> for u32 {
-    type Error = ();
+    type Error = ConversionError;
     fn try_from(value: QueryResult) -> std::result::Result<Self, Self::Error> {
         match value {
             QueryResult::RowCount(r) => Ok(r),
-            _ => Err(())
+            _ => Err(ConversionError::RowCountError),
         }
     }
 }
@@ -116,7 +115,10 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Closed: {}\nHandle: {:?}\nColumns: {:?}\nRows: {}",
+            "Closed: {}\n\
+            Handle: {:?}\n\
+            Columns: {:?}\n\
+            Rows: {}",
             self.is_closed, self.result_set_handle, self.columns, self.total_rows_num
         )
     }
@@ -208,9 +210,11 @@ where
     }
 
     fn next_row(&mut self) -> Option<Result<T>> {
-        self.data_iter
-            .next()
-            .map(|r| Ok(T::deserialize(Row::new(r, &self.columns))?))
+        self.data_iter.next().map(|r| {
+            Ok(T::deserialize(Row::new(r, &self.columns))
+                .map_err(DataError::TypeParseError)
+                .map_err(DriverError::DataError)?)
+        })
     }
 
     /// Closes the result set if it wasn't already closed
@@ -231,7 +235,7 @@ where
     fn fetch_chunk(&mut self) -> Result<()> {
         // Check the statement handle
         self.result_set_handle
-            .ok_or_else(|| RequestError::MissingHandleError.into())
+            .ok_or_else(|| DriverError::RequestError(RequestError::MissingHandleError).into())
             .and_then(|h| {
                 // Dereference connection
                 let mut con = (*self.connection).borrow_mut();
@@ -323,15 +327,15 @@ impl PreparedStatement {
         T: IntoIterator<Item = S>,
     {
         let (num_columns, columns) = match self.parameter_data.as_ref() {
-            Some(p) => (&p.num_columns, &p.columns),
-            None => (&DUMMY_COLUMNS_NUM, &DUMMY_COLUMNS_VEC),
+            Some(p) => (&p.num_columns, p.columns.as_slice()),
+            None => (&0, [].as_slice()),
         };
 
         let col_names = columns
             .iter()
             .map(|c| c.name.as_str())
             .collect::<Vec<&str>>();
-        let col_major_data = to_col_major(&col_names, data)?;
+        let col_major_data = to_col_major(&col_names, data).map_err(DriverError::DataError)?;
 
         let payload = json!({
             "command": "executePreparedStatement",

@@ -11,10 +11,18 @@ use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
-use crate::constants::{NOT_PONG, NO_RESPONSE_DATA, NO_RESULT_SET};
-use crate::error::{ConnectionError, Error, RequestError, Result};
+use crate::error::{ConnectionError, DriverError, RequestError, Result};
 use crate::query::{PreparedStatement, QueryResult};
-use crate::response::{Response, ResponseData};
+use crate::response::{Attributes, Response, ResponseData};
+
+#[cfg(feature = "flate2")]
+use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+#[cfg(feature = "flate2")]
+use std::io::Write;
+
+// Convenience aliases
+type ReqResult<T> = std::result::Result<T, RequestError>;
+type ConResult = std::result::Result<WebSocket<MaybeTlsStream<TcpStream>>, ConnectionError>;
 
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
@@ -174,7 +182,10 @@ impl Connection {
     /// exa_con.ping().unwrap();
     /// ```
     pub fn ping(&mut self) -> Result<()> {
-        (*self.con).borrow_mut().ping()
+        Ok((*self.con)
+            .borrow_mut()
+            .ping()
+            .map_err(DriverError::RequestError)?)
     }
 
     /// Sets autocommit mode On or Off
@@ -272,8 +283,8 @@ impl Connection {
 pub(crate) struct ConnectionImpl {
     attr: HashMap<String, Value>,
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
-    send: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>, Value) -> Result<()>,
-    recv: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<Response>,
+    send: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>, Value) -> ReqResult<()>,
+    recv: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response>,
 }
 
 impl Drop for ConnectionImpl {
@@ -317,31 +328,8 @@ impl ConnectionImpl {
     /// If all options were exhausted and a connection could not be established
     /// an error is returned.
     pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
-        let addresses = opts.parse_dsn()?;
-        let ws_prefix = opts.get_ws_prefix();
-        let mut try_count = addresses.len();
-        let mut addr_iter = addresses.into_iter();
-
-        let ws = loop {
-            try_count -= 1;
-
-            if let Some(addr) = addr_iter.next() {
-                let url = format!("{}://{}", ws_prefix, addr);
-                let res = Self::create_websocket(&url);
-
-                match res {
-                    Ok(ws) => break Ok(ws),
-                    Err(e) => {
-                        if try_count == 0 {
-                            break Err(e);
-                        }
-                    }
-                }
-            } else {
-                break Err(Error::ConnectionError(ConnectionError::InvalidDSN));
-            }
-        }?;
-
+        let ws =
+            Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
         let attr = HashMap::new();
         let mut con = Self {
             ws,
@@ -350,6 +338,7 @@ impl ConnectionImpl {
             recv,
         };
 
+        // Should we use compression?
         #[cfg(feature = "flate2")]
         let compress = opts.get_compression();
 
@@ -413,7 +402,10 @@ impl ConnectionImpl {
         self.exec_with_results(con_impl, payload)
             .and_then(|mut v: Vec<QueryResult>| {
                 if v.is_empty() {
-                    Err(NO_RESULT_SET.into())
+                    Err(
+                        DriverError::RequestError(RequestError::InvalidResponse("result sets"))
+                            .into(),
+                    )
                 } else {
                     Ok(v.swap_remove(0))
                 }
@@ -431,7 +423,6 @@ impl ConnectionImpl {
     {
         let payload = json!({"command": "createPreparedStatement", "sqlText": query});
         self.get_resp_data(payload)
-            .map_err(|e| e.conv_query_error())
             .and_then(|r| r.try_to_prepared_stmt(con_impl))
     }
 
@@ -450,26 +441,33 @@ impl ConnectionImpl {
     }
 
     /// Ping the server and waits for a Pong frame
-    pub(crate) fn ping(&mut self) -> Result<()> {
+    pub(crate) fn ping(&mut self) -> ReqResult<()> {
         self.ws.write_message(Message::Ping(vec![]))?;
         match self.ws.read_message()? {
             Message::Pong(_) => Ok(()),
-            _ => Err(NOT_PONG.into()),
+            _ => Err(RequestError::InvalidResponse("pong frame")),
         }
     }
 
     /// Returns response data from a request
     pub(crate) fn get_resp_data(&mut self, payload: Value) -> Result<ResponseData> {
-        self.do_request(payload)?
-            .ok_or_else(|| NO_RESPONSE_DATA.into())
+        self.do_request(payload)?.ok_or_else(|| {
+            DriverError::RequestError(RequestError::InvalidResponse("response data")).into()
+        })
     }
 
     /// Sends a request and waits for its response
     pub(crate) fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
-        let (data, attr) = Result::from(self.send(payload).and_then(|_| self.recv())?)?;
+        let resp = self
+            .send(payload)
+            .and_then(|_| self.recv())
+            .map_err(DriverError::RequestError)?;
+
+        let (data, attr): (Option<ResponseData>, Option<Attributes>) = resp.try_into()?;
         if let Some(attributes) = attr {
             self.attr.extend(attributes.map)
         }
+
         Ok(data)
     }
 
@@ -492,24 +490,50 @@ impl ConnectionImpl {
         payload: Value,
     ) -> Result<Vec<QueryResult>> {
         self.get_resp_data(payload)
-            .map_err(|e| e.conv_query_error())
             .and_then(|r| r.try_to_query_results(con_impl))
     }
 
-    fn send(&mut self, payload: Value) -> Result<()> {
+    fn send(&mut self, payload: Value) -> ReqResult<()> {
         (self.send)(&mut self.ws, payload)
     }
 
-    fn recv(&mut self) -> Result<Response> {
+    fn recv(&mut self) -> ReqResult<Response> {
         (self.recv)(&mut self.ws)
     }
 
+    /// Attempts to create a Websocket for the given [ConOpts]
+    fn try_websocket_from_opts(opts: &ConOpts) -> ConResult {
+        let addresses = opts.parse_dsn()?;
+        let ws_prefix = opts.get_ws_prefix();
+        let mut try_count = addresses.len();
+        let mut addr_iter = addresses.into_iter();
+
+        loop {
+            try_count -= 1;
+
+            if let Some(addr) = addr_iter.next() {
+                let url = format!("{}://{}", ws_prefix, addr);
+                let res = Self::try_websocket_from_url(&url);
+
+                match res {
+                    Ok(ws) => break Ok(ws),
+                    Err(e) => {
+                        if try_count == 0 {
+                            break Err(e);
+                        }
+                    }
+                }
+            } else {
+                break Err(ConnectionError::InvalidDSN);
+            }
+        }
+    }
+
     /// Attempts to create a websocket for the given URL
-    fn create_websocket(url: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>> {
-        Url::parse(url)
-            .map_err(From::from)
-            .and_then(|u| tungstenite::connect(u).map_err(From::from))
-            .map(|(ws, _)| ws)
+    fn try_websocket_from_url(url: &str) -> ConResult {
+        let url = Url::parse(url)?;
+        let (ws, _) = tungstenite::connect(url)?;
+        Ok(ws)
     }
 
     /// Gets connection attributes from Exasol
@@ -528,7 +552,9 @@ impl ConnectionImpl {
             .get_resp_data(payload)
             .and_then(|p| p.try_to_public_key_string())?;
 
-        Ok(RsaPublicKey::from_pkcs1_pem(&pem)?)
+        Ok(RsaPublicKey::from_pkcs1_pem(&pem)
+            .map_err(ConnectionError::PKCSError)
+            .map_err(DriverError::ConnectionError)?)
     }
 
     /// Authenticates to Exasol
@@ -539,25 +565,22 @@ impl ConnectionImpl {
 
         // Encrypt password using server's public key
         let key = self.get_public_key(opts.get_protocol_version())?;
-        let payload = opts.into_value(key)?;
+        let payload = opts
+            .into_value(key)
+            .map_err(DriverError::ConnectionError)?;
 
-        self.do_request(payload).map_err(|e| match e {
-            Error::RequestError(RequestError::ExaError(err)) => {
-                ConnectionError::AuthError(err).into()
-            }
-            _ => e,
-        })?;
-
+        // Send login request
+        self.do_request(payload)?;
         Ok(())
     }
 }
 
 // Websocket communication functions, regular and compressed.
-fn send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value) -> Result<()> {
+fn send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value) -> ReqResult<()> {
     Ok(ws.write_message(Message::Text(payload.to_string()))?)
 }
 
-fn recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<Response> {
+fn recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response> {
     loop {
         break match ws.read_message()? {
             Message::Text(resp) => Ok(serde_json::from_str::<Response>(&resp)?),
@@ -568,19 +591,14 @@ fn recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<Response> {
 }
 
 #[cfg(feature = "flate2")]
-use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
-#[cfg(feature = "flate2")]
-use std::io::Write;
-
-#[cfg(feature = "flate2")]
-fn compressed_send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value) -> Result<()> {
+fn compressed_send(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>, payload: Value) -> ReqResult<()> {
     let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
     enc.write_all(payload.to_string().as_bytes())?;
     Ok(ws.write_message(Message::Binary(enc.finish()?))?)
 }
 
 #[cfg(feature = "flate2")]
-fn compressed_recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> Result<Response> {
+fn compressed_recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response> {
     loop {
         break match ws.read_message()? {
             Message::Text(resp) => Ok(serde_json::from_reader(ZlibDecoder::new(resp.as_bytes()))?),

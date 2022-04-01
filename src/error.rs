@@ -1,183 +1,109 @@
 use crate::response::{Attributes, ExaError, Response, ResponseData};
 use rsa;
 use serde_json;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::Debug;
 use std::num::ParseIntError;
+use thiserror::Error as ThisError;
 use tungstenite;
 use url;
 
-/// Result implementation to return an exasol::error::Error;
+/// Result implementation for the crate.;
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl From<Response> for Result<(Option<ResponseData>, Option<Attributes>)> {
-    fn from(resp: Response) -> Self {
+impl TryFrom<Response> for (Option<ResponseData>, Option<Attributes>) {
+    type Error = Error;
+
+    fn try_from(resp: Response) -> Result<Self> {
         match resp {
             Response::Ok {
                 response_data: data,
                 attributes: attr,
             } => Ok((data, attr)),
-            Response::Error { exception: e } => Err(e.into()),
+            Response::Error { exception: e } => Err(Error::ExasolError(e)),
         }
     }
 }
 
-/// Error type for Exasol
-#[derive(Debug)]
+/// Error type for the crate.
+#[derive(Debug, ThisError)]
 pub enum Error {
-    DataError(String),
+    #[error(transparent)]
+    DriverError(#[from] DriverError),
+    #[error(transparent)]
+    ExasolError(#[from] ExaError),
+}
+
+/// Driver related errors.
+///
+/// These errors have nothing to do with the Exasol database itself,
+/// but rather the driver having issues with the underlying websocket connection,
+/// making requests, processing responses, etc.
+#[derive(Debug, ThisError)]
+pub enum DriverError {
+    #[error("Missing parameter to bind for {0}")]
     BindError(String),
-    ConnectionError(ConnectionError),
-    RequestError(RequestError),
-    QueryError(ExaError),
+    #[error(transparent)]
+    DataError(#[from] DataError),
+    #[error(transparent)]
+    ConversionError(#[from] ConversionError),
+    #[error(transparent)]
+    RequestError(#[from] RequestError),
+    #[error(transparent)]
+    ConnectionError(#[from] ConnectionError),
 }
 
-impl Error {
-    /// Converts this [Error] variant to a QueryError if the variant matches.
-    /// Otherwise returns the initial error.
-    pub(crate) fn conv_query_error(self) -> Self {
-        match self {
-            Self::RequestError(RequestError::ExaError(err)) => Self::QueryError(err),
-            _ => self,
-        }
-    }
+/// Data processing related errors.
+#[derive(Debug, ThisError)]
+pub enum DataError {
+    #[error("Missing data for column {0}")]
+    MissingColumn(String),
+    #[error("Expecting {0} data columns in array, found {1}")]
+    InsufficientData(usize, usize),
+    #[error("Data iterator items must deserialize to sequences or maps")]
+    InvalidIterType,
+    #[error(transparent)]
+    TypeParseError(#[from] serde_json::error::Error),
 }
 
-impl std::error::Error for Error {}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DataError(e) => write!(f, "{}", e),
-            Self::BindError(e) => write!(f, "{}", e),
-            Self::ConnectionError(e) => write!(f, "{}", e),
-            Self::RequestError(e) => write!(f, "{}", e),
-            Self::QueryError(e) => write!(f, "{}", e),
-        }
-    }
-}
-
-impl From<&'static str> for Error {
-    fn from(e: &'static str) -> Self {
-        Self::RequestError(RequestError::InvalidResponse(e))
-    }
-}
-
-impl From<String> for Error {
-    fn from(e: String) -> Self {
-        Self::DataError(e)
-    }
-}
-
-impl From<ConnectionError> for Error {
-    fn from(e: ConnectionError) -> Self {
-        Self::ConnectionError(e)
-    }
-}
-
-impl From<RequestError> for Error {
-    fn from(e: RequestError) -> Self {
-        Self::RequestError(e)
-    }
-}
-
-impl From<ExaError> for Error {
-    fn from(e: ExaError) -> Self {
-        Self::QueryError(e)
-    }
-}
-
-impl From<serde_json::error::Error> for Error {
-    fn from(e: serde_json::error::Error) -> Self {
-        Self::RequestError(RequestError::ResponseParseError(e))
-    }
-}
-
-impl From<url::ParseError> for Error {
-    fn from(e: url::ParseError) -> Self {
-        Self::ConnectionError(ConnectionError::DSNParseError(e))
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Self::ConnectionError(ConnectionError::HostnameResolutionError(e))
-    }
-}
-
-impl From<ParseIntError> for Error {
-    fn from(e: ParseIntError) -> Self {
-        Self::ConnectionError(ConnectionError::RangeParseError(e))
-    }
-}
-
-impl From<rsa::errors::Error> for Error {
-    fn from(e: rsa::errors::Error) -> Self {
-        Self::ConnectionError(ConnectionError::CryptographyError(e))
-    }
-}
-
-impl From<rsa::pkcs1::Error> for Error {
-    fn from(e: rsa::pkcs1::Error) -> Self {
-        Self::ConnectionError(ConnectionError::PKCSError(e))
-    }
-}
-
-impl From<tungstenite::error::Error> for Error {
-    fn from(e: tungstenite::error::Error) -> Self {
-        Self::ConnectionError(ConnectionError::WebsocketError(e))
-    }
+/// Conversion errors from [QueryResult] to its variants.
+#[derive(Debug, ThisError)]
+pub enum ConversionError {
+    #[error("Not a result set")]
+    ResultSetError,
+    #[error("Not a row count")]
+    RowCountError,
 }
 
 /// Request related errors
-#[derive(Debug)]
+#[derive(Debug, ThisError)]
 pub enum RequestError {
+    #[error(transparent)]
+    MessageParseError(#[from] serde_json::error::Error),
+    #[error(transparent)]
+    WebsocketError(#[from] tungstenite::error::Error),
+    #[error(transparent)]
+    CompressionError(#[from] std::io::Error),
+    #[error("Cannot fetch rows chunk - missing statement handle")]
     MissingHandleError,
+    #[error("Response does not contain {0}")]
     InvalidResponse(&'static str),
-    ResponseParseError(serde_json::error::Error),
-    ExaError(ExaError),
-}
-
-impl std::error::Error for RequestError {}
-
-impl Display for RequestError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MissingHandleError => {
-                write!(f, "Cannot fetch rows chunk - missing statement handle")
-            }
-            Self::InvalidResponse(e) => write!(f, "{}", e),
-            Self::ResponseParseError(e) => write!(f, "{}", e),
-            Self::ExaError(e) => write!(f, "{}", e),
-        }
-    }
 }
 
 /// Connection related errors
-#[derive(Debug)]
+#[derive(Debug, ThisError)]
 pub enum ConnectionError {
+    #[error("Invalid DSN provided")]
     InvalidDSN,
-    DSNParseError(url::ParseError),
-    HostnameResolutionError(std::io::Error),
-    RangeParseError(ParseIntError),
-    CryptographyError(rsa::errors::Error),
-    PKCSError(rsa::pkcs1::Error),
-    AuthError(ExaError),
-    WebsocketError(tungstenite::error::Error),
-}
-
-impl std::error::Error for ConnectionError {}
-
-impl Display for ConnectionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidDSN => write!(f, "Invalid DSN provided"),
-            Self::DSNParseError(e) => write!(f, "{}", e),
-            Self::HostnameResolutionError(e) => write!(f, "{}", e),
-            Self::RangeParseError(e) => write!(f, "{}", e),
-            Self::CryptographyError(e) => write!(f, "{}", e),
-            Self::PKCSError(e) => write!(f, "{}", e),
-            Self::AuthError(e) => write!(f, "{}", e),
-            Self::WebsocketError(e) => write!(f, "{:?}", e),
-        }
-    }
+    #[error(transparent)]
+    DSNParseError(#[from] url::ParseError),
+    #[error("Cannot resolve DSN hostnames")]
+    HostnameResolutionError(#[from] std::io::Error),
+    #[error("Cannot parse provided hostname range in DSN")]
+    RangeParseError(#[from] ParseIntError),
+    #[error(transparent)]
+    CryptographyError(#[from] rsa::errors::Error),
+    #[error(transparent)]
+    PKCSError(#[from] rsa::pkcs1::Error),
+    #[error(transparent)]
+    WebsocketError(#[from] tungstenite::error::Error),
 }

@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use crate::error::{DriverError, Result};
 use lazy_static::lazy_static;
 use regex::{Captures, Regex};
 use serde_json::{Map, Value};
@@ -61,7 +61,7 @@ where
         .replace_all(query, |cap: &Captures| match map.get(&cap[2]) {
             Some(k) => k,
             None => {
-                result = Err(Error::BindError(format!("{} not found in map!", &cap[1])));
+                result = Err(DriverError::BindError(cap[1].to_owned()).into());
                 dummy
             }
         })
@@ -329,6 +329,30 @@ impl SQLParam for f32 {
 impl SQLParam for f64 {
     fn to_sql_param(&self) -> String {
         self.to_string()
+    }
+}
+
+/// ```
+/// use exasol::SQLParam;
+/// assert_eq!("1", Some(1).to_sql_param());
+/// ```
+/// ```
+/// use exasol::SQLParam;
+/// assert_eq!("'la'", Some("la").to_sql_param());
+/// ```
+/// ```
+/// use exasol::SQLParam;
+/// assert_eq!("NULL", None.to_sql_param());
+/// ```
+impl<T> SQLParam for Option<T>
+where
+    T: SQLParam,
+{
+    fn to_sql_param(&self) -> String {
+        match self {
+            Some(v) => v.to_sql_param(),
+            None => ().to_sql_param(),
+        }
     }
 }
 

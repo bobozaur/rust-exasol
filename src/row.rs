@@ -1,13 +1,16 @@
-use crate::error::{Error, Result};
+use crate::error::DataError;
 use crate::response::Column;
-use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, Visitor};
+use serde::de::{DeserializeSeed, IntoDeserializer, MapAccess, Visitor, Error as SError};
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
-use serde_json::{Error as SJError, Map, Value};
+use serde_json::{Error, Map, Value};
 use std::borrow::{Borrow, Cow};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::vec::IntoIter;
+
+// Convenience alias
+type DataResult<T> = std::result::Result<T, DataError>;
 
 #[test]
 #[allow(dead_code)]
@@ -132,7 +135,7 @@ impl<'de> serde::de::Deserializer<'de> for Row<'de> {
         bytes byte_buf unit unit_struct enum option identifier
     }
 
-    type Error = SJError;
+    type Error = Error;
     fn deserialize_any<V>(self, visitor: V) -> std::result::Result<V::Value, Self::Error>
     where
         V: serde::de::Visitor<'de>,
@@ -224,7 +227,7 @@ impl<'a> RowMapDeserializer<'a> {
 }
 
 impl<'de> MapAccess<'de> for RowMapDeserializer<'de> {
-    type Error = SJError;
+    type Error = Error;
 
     fn next_key_seed<T>(&mut self, seed: T) -> std::result::Result<Option<T::Value>, Self::Error>
     where
@@ -259,7 +262,7 @@ impl<'de> MapAccess<'de> for RowMapDeserializer<'de> {
     }
 }
 
-fn visit_map<'de, V>(row: Row<'de>, visitor: V) -> std::result::Result<V::Value, SJError>
+fn visit_map<'de, V>(row: Row<'de>, visitor: V) -> std::result::Result<V::Value, Error>
 where
     V: Visitor<'de>,
 {
@@ -282,7 +285,7 @@ struct MapKeyDeserializer<'de> {
 }
 
 impl<'de> serde::Deserializer<'de> for MapKeyDeserializer<'de> {
-    type Error = SJError;
+    type Error = Error;
 
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string
@@ -309,7 +312,7 @@ impl<'de> BorrowedCowStrDeserializer<'de> {
 }
 
 impl<'de> serde::de::Deserializer<'de> for BorrowedCowStrDeserializer<'de> {
-    type Error = SJError;
+    type Error = Error;
 
     fn deserialize_any<V>(self, visitor: V) -> std::result::Result<V::Value, Self::Error>
     where
@@ -379,7 +382,7 @@ fn col_major_map_data() {
 ///
 /// Sequence-like data is processed as such, and the columns are merely used to assert length.
 /// Map-like data though requires columns so the data is processed in the expected order.
-pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> Result<Vec<Vec<Value>>>
+pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> DataResult<Vec<Vec<Value>>>
 where
     S: Serialize,
     C: ?Sized + Hash + Ord + Display,
@@ -389,11 +392,11 @@ where
     let iter_data = data
         .into_iter()
         .map(|s| to_seq_iter(s, columns).map(IntoIterator::into_iter))
-        .collect::<Result<Vec<IntoIter<Value>>>>()?;
+        .collect::<DataResult<Vec<IntoIter<Value>>>>()?;
     Ok(ColumnMajorIterator(iter_data).collect::<Vec<Vec<Value>>>())
 }
 
-fn to_seq_iter<C, S>(data: S, columns: &[&C]) -> Result<Vec<Value>>
+fn to_seq_iter<C, S>(data: S, columns: &[&C]) -> DataResult<Vec<Value>>
 where
     S: Serialize,
     C: ?Sized + Hash + Ord + Display,
@@ -404,28 +407,23 @@ where
     match val {
         Value::Object(mut o) => columns.iter().map(|c| take_map_value(&mut o, c)).collect(),
         Value::Array(a) => take_arr_values(a, columns.len()),
-        _ => Err(Error::DataError(
-            "Data iterator items must deserialize to sequences or maps".to_owned(),
-        )),
+        _ => Err(DataError::InvalidIterType),
     }
 }
 
-fn take_map_value<C>(map: &mut Map<String, Value>, col: &C) -> Result<Value>
+fn take_map_value<C>(map: &mut Map<String, Value>, col: &C) -> DataResult<Value>
 where
     C: ?Sized + Hash + Ord + Display,
     String: Borrow<C>,
 {
     map.remove(col)
-        .ok_or_else(|| Error::DataError(format!("Data is missing column {}", col)))
+        .ok_or_else(|| DataError::MissingColumn(col.to_string()))
 }
 
-fn take_arr_values(arr: Vec<Value>, len: usize) -> Result<Vec<Value>> {
+fn take_arr_values(arr: Vec<Value>, len: usize) -> DataResult<Vec<Value>> {
     let arr_len = arr.len();
     match len > arr_len {
-        true => Err(Error::DataError(format!(
-            "Expecting {} data columns in array, found {}",
-            len, arr_len
-        ))),
+        true => Err(DataError::InsufficientData(len, arr_len)),
         false => Ok(arr.into_iter().take(arr_len).collect()),
     }
 }
@@ -533,22 +531,22 @@ where
     D: Deserializer<'de>,
     F: Deserialize<'de>,
 {
-    struct TupleVariantVisitor<F>(PhantomData<F>);
+    struct SequenceVisitor<F>(PhantomData<F>);
 
-    impl<'de, F> Visitor<'de> for TupleVariantVisitor<F>
+    impl<'de, F> Visitor<'de> for SequenceVisitor<F>
     where
         F: Deserialize<'de>,
     {
         type Value = F;
 
         fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
-            write!(formatter, "A map")
+            write!(formatter, "A map-like type")
         }
 
         fn visit_map<A>(
             self,
             mut map: A,
-        ) -> std::result::Result<Self::Value, <A as MapAccess<'de>>::Error>
+        ) -> std::result::Result<Self::Value, A::Error>
         where
             A: MapAccess<'de>,
         {
@@ -562,9 +560,8 @@ where
                 }
             }
             let val = Value::Array(seq);
-            Self::Value::deserialize(val.into_deserializer())
-                .map_err(|_| A::Error::custom("blabla"))
+            Self::Value::deserialize(val.into_deserializer()).map_err(|_| A::Error::custom("Cannot deserialize type as sequence"))
         }
     }
-    deserializer.deserialize_map(TupleVariantVisitor(PhantomData))
+    deserializer.deserialize_map(SequenceVisitor(PhantomData))
 }

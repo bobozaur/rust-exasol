@@ -1,5 +1,4 @@
-use crate::constants::{DEFAULT_CLIENT_PREFIX, DEFAULT_FETCH_SIZE, DEFAULT_PORT, WSS_STR, WS_STR};
-use crate::error::{ConnectionError, Result};
+use crate::error::ConnectionError;
 use lazy_static::lazy_static;
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom;
@@ -99,6 +98,40 @@ pub(crate) struct InnerOpts {
     autocommit: bool,
 }
 
+impl Display for InnerOpts {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "DSN: {}\n\
+             User: {}\n\
+             Schema: {}\n\
+             Port: {}\n\
+             Protocol version: {}\n\
+             Client name: {}\n\
+             Client version: {}\n\
+             Client OS: {}\n\
+             Fetch size: {}\n\
+             Query timeout: {}\n\
+             Use encryption: {}\n\
+             Use compression: {}\n\
+             Autocommit: {}",
+            self.dsn.as_deref().unwrap_or(""),
+            self.user.as_deref().unwrap_or(""),
+            self.schema.as_deref().unwrap_or(""),
+            self.port,
+            self.protocol_version,
+            self.client_name,
+            self.client_version,
+            self.client_os,
+            self.fetch_size,
+            self.query_timeout,
+            self.use_encryption,
+            self.use_compression,
+            self.autocommit
+        )
+    }
+}
+
 impl Default for InnerOpts {
     fn default() -> Self {
         let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "UNKNOWN".to_owned());
@@ -108,12 +141,12 @@ impl Default for InnerOpts {
             user: None,
             password: None,
             schema: None,
-            port: DEFAULT_PORT,
+            port: 8563,
             protocol_version: ProtocolVersion::V3,
-            client_name: format!("{} {}", DEFAULT_CLIENT_PREFIX, crate_version),
+            client_name: format!("{} {}", "Rust Exasol", crate_version),
             client_version: crate_version,
             client_os: env::consts::OS.to_owned(),
-            fetch_size: DEFAULT_FETCH_SIZE,
+            fetch_size: 5 * 1024 * 1024,
             query_timeout: 0,
             use_encryption: false,
             use_compression: false,
@@ -141,6 +174,12 @@ impl Default for InnerOpts {
 /// ```
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct ConOpts(Box<InnerOpts>);
+
+impl Display for ConOpts {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// Connection options
 impl ConOpts {
@@ -277,15 +316,15 @@ impl ConOpts {
     /// Convenience method for determining the websocket type.
     pub(crate) fn get_ws_prefix(&self) -> &str {
         match self.get_encryption() {
-            false => WS_STR,
-            true => WSS_STR,
+            false => "ws",
+            true => "wss",
         }
     }
 
     /// Parses the provided DSN to expand ranges and resolve IP addresses.
     /// Connection to all nodes will then be attempted in a random order
     /// until one is successful or all failed.
-    pub(crate) fn parse_dsn(&self) -> Result<Vec<String>> {
+    pub(crate) fn parse_dsn(&self) -> std::result::Result<Vec<String>, ConnectionError> {
         lazy_static! {
             static ref RE: Regex = Regex::new(r"(?x)
                     ^(.+?)                     # Hostname prefix
@@ -299,7 +338,7 @@ impl ConOpts {
             .dsn
             .as_deref()
             .and_then(|dsn| RE.captures(dsn))
-            .ok_or_else(|| ConnectionError::InvalidDSN.into())
+            .ok_or(ConnectionError::InvalidDSN)
             .and_then(|cap| {
                 // Parse capture groups from regex
                 let hostname_prefix = &cap[1];
@@ -340,7 +379,7 @@ impl ConOpts {
                             .map(|ip| ip.to_string().split(':').take(1).collect())
                             .collect::<Vec<String>>())
                     })
-                    .collect::<Result<Vec<Vec<String>>>>()?
+                    .collect::<std::result::Result<Vec<Vec<String>>, ConnectionError>>()?
                     .into_iter()
                     .flatten()
                     .map(|addr| format!("{}:{}", addr, port))
@@ -353,7 +392,10 @@ impl ConOpts {
     }
 
     /// Encrypts the password with the provided key
-    pub(crate) fn encrypt_password(&self, public_key: RsaPublicKey) -> Result<String> {
+    pub(crate) fn encrypt_password(
+        &self,
+        public_key: RsaPublicKey,
+    ) -> std::result::Result<String, ConnectionError> {
         let mut rng = OsRng;
         let padding = PaddingScheme::new_pkcs1v15_encrypt();
         let pass_bytes = self.0.password.as_deref().unwrap_or("").as_bytes();
@@ -361,7 +403,10 @@ impl ConOpts {
         Ok(enc_pass)
     }
 
-    pub(crate) fn into_value(self, key: RsaPublicKey) -> Result<Value> {
+    pub(crate) fn into_value(
+        self,
+        key: RsaPublicKey,
+    ) -> std::result::Result<Value, ConnectionError> {
         Ok(json!({
         "username": self.0.user,
         "password": self.encrypt_password(key)?,
