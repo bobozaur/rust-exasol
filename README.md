@@ -11,6 +11,7 @@ Features available:
  - WSS support through native-tls and rustls
  - Compression support
  - Row deserialization into Rust types
+ - Positional parameter binding
  - Named parameter binding
  - Autocommit is enabled by default. Disabling it results in transactional mode being enabled, which requires explicit "COMMIT" or "ROLLBACK" statements to be executed.
 
