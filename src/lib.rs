@@ -165,10 +165,41 @@
 //! let exa_con = Connection::new(opts).unwrap();
 //! ```
 //!
+//! # Features
+//!
+//! `native-tls` - (disabled by default) enables tungstenite's WSS support through native-tls
+//! `rustls` - (disabled by default) enables tungstenite's WSS support through rustls
+//! `flate2` - (disabled by default) enables support for requests and responses compression
+//!
+//! Enabling these features allows changing additional settings in [ConOpts] instances.
+//!
+//! # Panics
+//! Attempting to use these methods without their respective features enabled results in panics.
+//!
+//! ``` ignore
+//! # use exasol::{ConOpts, Connection};
+//! # use std::env;
+//!
+//! # let dsn = env::var("EXA_DSN").unwrap();
+//! # let schema = env::var("EXA_SCHEMA").unwrap();
+//! # let user = env::var("EXA_USER").unwrap();
+//! # let password = env::var("EXA_PASSWORD").unwrap();
+//! #
+//! let mut opts = ConOpts::new();
+//!
+//! opts.set_dsn(dsn);
+//! opts.set_user(user);
+//! opts.set_password(password);
+//! opts.set_schema(schema);
+//!
+//! opts.set_encryption(true);
+//! opts.set_compression(true);
+//! ```
+//!
 //! # Batch Execution
 //!
-//! Currently, the faster query processing functionalities are either
-//! through [Connection::execute_batch] or [PreparedStatement].
+//! Faster query execution can be achieved through either
+//! [Connection::execute_batch] or [PreparedStatement].
 
 extern crate core;
 
