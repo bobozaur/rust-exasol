@@ -19,13 +19,13 @@ Features planned for future versions:
   - Performant IMPORT/EXPORT functionalities
   - Performant parallel IMPORT/EXPORT
 
-##Crate Features:
+## Crate Features:
 * native-tls - (disabled by default) enables `tungstenite`'s WSS support through `native-tls`
 * rustls - (disabled by default) enables `tungstenite`'s WSS support through `rustls`
 * flate2 - (disabled by default) enables support for requests and responses compression
 
 
-##License
+## License
 Licensed under either of
 
 * Apache License, Version 2.0, (LICENSE-APACHE or https://www.apache.org/licenses/LICENSE-2.0)

@@ -57,8 +57,10 @@ pub enum DriverError {
 pub enum BindError {
     #[error("Missing parameter to bind for {0}")]
     MappingError(String),
+    #[error("Parameter type must serialize to a sequence or map")]
+    SerializeError,
     #[error(transparent)]
-    DeserError(#[from] serde_json::error::Error),
+    DeserializeError(#[from] serde_json::error::Error),
     #[error(transparent)]
     ParseIntError(#[from] ParseIntError)
 }

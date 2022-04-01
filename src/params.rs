@@ -10,29 +10,18 @@ type BindResult = std::result::Result<String, BindError>;
 /// Binds named or positional parameters from a type implementing [Serialize].
 /// If the type is map-like, named parameters are needed.
 /// For sequence-like types, positional parameters are needed.
-/// Single value types are considered a Vec with one element, and are thus treated the same as
-/// sequence-like types.
 ///
 /// Returns a Result containing the formatted string or an Error if any parameters are missing.
 ///
-/// ```
-/// use exasol::bind;
-///
-/// let params = "VALUE1";
-/// let query = "INSERT INTO MY_TABLE VALUES(:0);";
-/// let new_query = bind(query, params).unwrap();
-///
-/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE1');", new_query);
-/// ```
 ///
 /// ```
 /// use exasol::bind;
 ///
 /// let params = vec!["VALUE1", "VALUE2"];
-/// let query = "INSERT INTO MY_TABLE VALUES(:0, :1);";
+/// let query = "INSERT INTO MY_TABLE VALUES(:1, :0);";
 /// let new_query = bind(query, params).unwrap();
 ///
-/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE1', 'VALUE2');", new_query);
+/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE2', 'VALUE1');", new_query);
 /// ```
 ///
 /// ```
@@ -71,7 +60,7 @@ where
     T: Serialize,
 {
     Ok(serde_json::to_value(params)
-        .map_err(BindError::DeserError)
+        .map_err(BindError::DeserializeError)
         .and_then(|val| parametrize_query(query, val))
         .map_err(DriverError::BindError)?)
 }
@@ -82,7 +71,7 @@ fn parametrize_query(query: &str, val: Value) -> BindResult {
     match val {
         Value::Object(o) => bind_map_params(query, gen_map_params(o)),
         Value::Array(a) => bind_seq_params(query, gen_seq_params(a)),
-        _ => bind_seq_params(query, gen_single_param(val)),
+        _ => Err(BindError::SerializeError),
     }
 }
 
@@ -151,11 +140,6 @@ fn gen_seq_params(params: Vec<Value>) -> Vec<String> {
     params.into_iter().map( into_sql_param).collect()
 }
 
-/// Will treat Value variants that are not Array or Object as a single element Vec.
-#[inline]
-fn gen_single_param(param: Value) -> Vec<String> {
-    vec![into_sql_param(param)]
-}
 /// Transforms [Value] to it's SQL string representation
 fn into_sql_param(val: Value) -> String {
     match val {
