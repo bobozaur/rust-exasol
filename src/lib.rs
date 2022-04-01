@@ -30,7 +30,8 @@
 //! let result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
 //!
 //! // The ResultSet is a lazy iterator, fetching rows as needed.
-//! // For that reason, it can only be iterated over when owned, as it gets consumed in the process.
+//! // For that reason, it can only be iterated over when owned,
+//! // as it gets consumed in the process.
 //! if let QueryResult::ResultSet(r) = result {
 //!     // Each row is a Result<Vec<serde_json::Value>>
 //!     for row in r {
@@ -46,8 +47,8 @@
 //! the full iterator toolset can be used.
 //!
 //! Additionally, `TryFrom` is implemented for [QueryResult](crate::query::QueryResult) to make
-//! [ResultSet](crate::query::ResultSet) retrieval more convenient
-//! (the same can be done for the u32 representing affected rows count).
+//! [ResultSet](crate::query::ResultSet) retrieval more convenient, instead of having to match
+//! against it (the same can be done for the `u32` representing the affected rows count).
 //!
 //! ```
 //! # use exasol::error::Result;
@@ -59,7 +60,7 @@
 //! # let schema = env::var("EXA_SCHEMA").unwrap();
 //! # let user = env::var("EXA_USER").unwrap();
 //! # let password = env::var("EXA_PASSWORD").unwrap();
-//!
+//! #
 //! let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 //! let result = exa_con.execute("SELECT OBJECT_NAME FROM EXA_ALL_OBJECTS LIMIT 5000;").unwrap();
 //!
@@ -73,7 +74,7 @@
 //!     .collect();
 //! ```
 //!
-//! In the example above, note the `.collect::<Result<Vec<Row>>>()` call.
+//! In the example above, note the `collect::<Result<Vec<Row>>>()` call.
 //! When iterating over a result set, because fetch requests may fail, every row
 //! (which by default is a [Vec<serde_json::Value>]) is in the form of a [Result].
 //!
@@ -95,7 +96,7 @@
 //! # use exasol::error::Result;
 //! # use serde_json::Value;
 //! # use std::env;
-//!
+//! #
 //! # let dsn = env::var("EXA_DSN").unwrap();
 //! # let schema = env::var("EXA_SCHEMA").unwrap();
 //! # let user = env::var("EXA_USER").unwrap();
@@ -166,9 +167,9 @@
 //!
 //! # Features
 //!
-//! `native-tls` - (disabled by default) enables tungstenite's WSS support through native-tls
-//! `rustls` - (disabled by default) enables tungstenite's WSS support through rustls
-//! `flate2` - (disabled by default) enables support for requests and responses compression
+//! - `native-tls` - (disabled by default) enables `tungstenite` WSS support through native-tls
+//! - `rustls` - (disabled by default) enables `tungstenite` WSS support through rustls
+//! - `flate2` - (disabled by default) enables support for requests and responses compression
 //!
 //! Enabling these features allows changing additional settings in [ConOpts] instances.
 //!
@@ -178,7 +179,7 @@
 //! ``` ignore
 //! # use exasol::{ConOpts, Connection};
 //! # use std::env;
-//!
+//! #
 //! # let dsn = env::var("EXA_DSN").unwrap();
 //! # let schema = env::var("EXA_SCHEMA").unwrap();
 //! # let user = env::var("EXA_USER").unwrap();

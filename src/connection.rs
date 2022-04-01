@@ -95,7 +95,7 @@ impl Connection {
     /// # use exasol::error::Result;
     /// # use serde_json::Value;
     /// # use std::env;
-    ///
+    /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
@@ -127,11 +127,12 @@ impl Connection {
     /// # use exasol::{connect, QueryResult};
     /// # use exasol::error::Result;
     /// # use std::env;
-    ///
+    /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let queries = vec!["SELECT 3", "SELECT 4"];
     /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
@@ -153,11 +154,12 @@ impl Connection {
     /// # use exasol::error::Result;
     /// # use serde_json::json;
     /// # use std::env;
-    ///
+    /// #
     /// # let dsn = env::var("EXA_DSN").unwrap();
     /// # let schema = env::var("EXA_SCHEMA").unwrap();
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let prepared_stmt: PreparedStatement = exa_con.prepare("SELECT 1 FROM (SELECT 1) TMP WHERE 1 = ?").unwrap();
     /// let data = vec![vec![json!(1)]];

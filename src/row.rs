@@ -448,7 +448,7 @@ impl Iterator for ColumnMajorIterator {
 /// Deserialization function that can be used through the `serde(deserialize_with = "...")`
 /// attribute to aid in deserialization of enum variants as sequences instead of maps.
 ///
-/// Due to the non-descriptive nature of a Row, which can be deserialized into
+/// Due to the non-descriptive nature of a database row, which can be deserialized into
 /// either sequences or maps, the default behaviour is to deserialize them as maps.
 ///
 /// In the case of enum variants, the default behaviour is always employed. Changing
