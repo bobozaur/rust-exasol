@@ -71,7 +71,7 @@
 //!     .unwrap()
 //!     .into_iter()
 //!     .map(|row| row[0].as_str().unwrap().to_owned())
-//!     .collect();
+//!     .collect::<Vec<String>>();
 //! ```
 //!
 //! In the example above, note the `collect::<Result<Vec<Row>>>()` call.
