@@ -137,7 +137,7 @@ fn gen_map_params(params: Map<String, Value>) -> HashMap<String, String> {
 /// Generates a `Vec<String>` of the params SQL representation.
 #[inline]
 fn gen_seq_params(params: Vec<Value>) -> Vec<String> {
-    params.into_iter().map( into_sql_param).collect()
+    params.into_iter().map(into_sql_param).collect()
 }
 
 /// Transforms [Value] to it's SQL string representation

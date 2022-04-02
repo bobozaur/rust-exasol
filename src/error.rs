@@ -62,7 +62,7 @@ pub enum BindError {
     #[error(transparent)]
     DeserializeError(#[from] serde_json::error::Error),
     #[error(transparent)]
-    ParseIntError(#[from] ParseIntError)
+    ParseIntError(#[from] ParseIntError),
 }
 
 /// Data processing related errors.
