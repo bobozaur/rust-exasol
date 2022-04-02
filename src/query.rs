@@ -364,7 +364,6 @@ impl PreparedStatement {
     ///
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let prep_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?, ?, ?)").unwrap();
-    /// println!("{:?}", &prep_stmt);
     ///
     /// let json_data = json!(
     ///     [
@@ -373,8 +372,8 @@ impl PreparedStatement {
     ///         ["e", "f", 3],
     ///     ]
     /// );
-    /// #
-    /// # prep_stmt.execute(json_data.as_array().unwrap()).unwrap();
+    ///
+    ///  prep_stmt.execute(json_data.as_array().unwrap()).unwrap();
     /// #
     /// # #[derive(Serialize, Clone)]
     /// # #[serde(rename_all = "UPPERCASE")]
