@@ -84,12 +84,16 @@
 //! # Custom Row Type
 //!
 //! The crate implements a custom deserializer, which is a trimmed down specialized version
-//! of the `serde_json` deserializer.
-//! Database row deserialization can be attempted to any type implementing [Deserialize](serde::Deserialize).
-//! This is thanks to the magic of `serde`.
+//! of the `serde_json` deserializer. Database row deserialization can be attempted to any
+//! type implementing [Deserialize](serde::Deserialize).
 //!
-//! Map-like types are natively deserialized.
-//! For `enum` sequence-like variants, see [deserialize_as_seq].
+//! This is thanks to the magic of `serde`. In addition, regular `serde` features are supported,
+//! such as flattening or renaming. Note that implicitly, column names are converted to lowercase
+//! for easier deserialization. This can be changed through the [Connection::set_lowercase_columns]
+//! method.
+//!
+//! Map-like and sequence-like types are natively deserialized. For `enum` sequence-like variants,
+//! see [deserialize_as_seq].
 //!
 //! ```
 //! use exasol::{connect, QueryResult, ResultSet};
