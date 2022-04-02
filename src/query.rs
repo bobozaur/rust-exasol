@@ -376,7 +376,7 @@ impl PreparedStatement {
     /// prep_stmt.execute(json_data).unwrap();
     ///
     /// #[derive(Serialize, Clone)]
-    /// #[serde(rename_all("UPPERCASE"))]
+    /// #[serde(rename_all = "UPPERCASE")]
     /// struct Data {
     ///     col1: String,
     ///     col2: String,
