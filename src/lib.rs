@@ -211,7 +211,7 @@ pub mod query;
 pub mod response;
 pub mod row;
 
-pub use crate::con_opts::ConOpts;
+pub use crate::con_opts::{ConOpts, ProtocolVersion};
 pub use crate::connection::{connect, Connection};
 pub use crate::params::bind;
 pub use crate::query::{PreparedStatement, QueryResult, ResultSet};

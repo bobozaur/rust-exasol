@@ -364,6 +364,7 @@ impl PreparedStatement {
     ///
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let prep_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?, ?, ?)").unwrap();
+    /// println!("{:?}", &prep_stmt);
     ///
     /// let json_data = json!(
     ///     [
@@ -372,22 +373,22 @@ impl PreparedStatement {
     ///         ["e", "f", 3],
     ///     ]
     /// );
-    ///
-    /// prep_stmt.execute(json_data).unwrap();
-    ///
-    /// #[derive(Serialize, Clone)]
-    /// #[serde(rename_all = "UPPERCASE")]
-    /// struct Data {
-    ///     col1: String,
-    ///     col2: String,
-    ///     col3: u8
-    /// }
-    ///
-    /// let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
-    /// let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
-    ///
-    /// prep_stmt.execute(vec_data).unwrap();
-    ///
+    /// #
+    /// # prep_stmt.execute(json_data.as_array().unwrap()).unwrap();
+    /// #
+    /// # #[derive(Serialize, Clone)]
+    /// # #[serde(rename_all = "UPPERCASE")]
+    /// # struct Data {
+    /// #     col1: String,
+    /// #    col2: String,
+    /// #    col3: u8
+    /// # }
+    /// #
+    /// # let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
+    /// # let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
+    /// #
+    /// # // prep_stmt.execute(vec_data).unwrap();
+    /// #
     /// ```
     pub fn execute<T, S>(&self, data: T) -> Result<QueryResult>
     where
