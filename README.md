@@ -1,3 +1,5 @@
+[![Crates.io](https://img.shields.io/crates/v/exasol.svg)](https://crates.io/crates/exasol)
+
 # exasol
 A synchronous database connector for Exasol written in Rust, based on the Exasol [Websocket API](https://github.com/exasol/websocket-api).  
 Inspired by [Py-Exasol](https://github.com/exasol/pyexasol).

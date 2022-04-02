@@ -51,16 +51,16 @@
 //! against it (the same can be done for the `u32` representing the affected rows count).
 //!
 //! ```
-//! # use exasol::error::Result;
-//! # use exasol::{connect, bind, QueryResult, ResultSet};
-//! # use std::env;
-//! # use serde_json::Value;
-//! #
-//! # let dsn = env::var("EXA_DSN").unwrap();
-//! # let schema = env::var("EXA_SCHEMA").unwrap();
-//! # let user = env::var("EXA_USER").unwrap();
-//! # let password = env::var("EXA_PASSWORD").unwrap();
-//! #
+//! use exasol::error::Result;
+//! use exasol::{connect, bind, QueryResult, ResultSet};
+//! use std::env;
+//! use serde_json::Value;
+//!
+//! let dsn = env::var("EXA_DSN").unwrap();
+//! let schema = env::var("EXA_SCHEMA").unwrap();
+//! let user = env::var("EXA_USER").unwrap();
+//! let password = env::var("EXA_PASSWORD").unwrap();
+//!
 //! let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 //! let result = exa_con.execute("SELECT OBJECT_NAME FROM EXA_ALL_OBJECTS LIMIT 5000;").unwrap();
 //!
@@ -92,15 +92,16 @@
 //! For `enum` sequence-like variants, see [deserialize_as_seq].
 //!
 //! ```
-//! # use exasol::{connect, QueryResult, ResultSet};
-//! # use exasol::error::Result;
-//! # use serde_json::Value;
-//! # use std::env;
-//! #
-//! # let dsn = env::var("EXA_DSN").unwrap();
-//! # let schema = env::var("EXA_SCHEMA").unwrap();
-//! # let user = env::var("EXA_USER").unwrap();
-//! # let password = env::var("EXA_PASSWORD").unwrap();
+//! use exasol::{connect, QueryResult, ResultSet};
+//! use exasol::error::Result;
+//! use serde_json::Value;
+//! use serde::Deserialize;
+//! use std::env;
+//!
+//! let dsn = env::var("EXA_DSN").unwrap();
+//! let schema = env::var("EXA_SCHEMA").unwrap();
+//! let user = env::var("EXA_USER").unwrap();
+//! let password = env::var("EXA_PASSWORD").unwrap();
 //! let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 //! let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
 //!
@@ -112,6 +113,23 @@
 //! // on the same result set, even while iterating through it
 //! let mut result_set = result_set.with_row_type::<Vec<String>>();
 //! let row2 = result_set.next();
+//!
+//! let result = exa_con.execute("SELECT 1 as col1, 2 as col2, 3 as col3 \
+//!                               UNION ALL \
+//!                               SELECT 4 as col1, 5 as col2, 6 as col3;").unwrap();
+//!
+//! #[derive(Debug, Deserialize)]
+//! struct Test {
+//!     col1: u8,
+//!     col2: u8,
+//!     col3: u8,
+//! }
+//!
+//! let result_set = ResultSet::try_from(result).unwrap().with_row_type::<Test>();
+//! for row in result_set.with_row_type::<Test>() {
+//!     let ok_row = row.unwrap();
+//!     // do stuff with row
+//! }
 //! ```
 //!
 //! # Parameter binding
