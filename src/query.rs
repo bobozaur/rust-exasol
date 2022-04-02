@@ -312,7 +312,7 @@ where
         self.close().ok();
     }
 }
-
+/// Type that represents a prepared statement in Exasol.
 #[derive(Debug)]
 pub struct PreparedStatement {
     statement_handle: usize,
@@ -333,6 +333,62 @@ impl PreparedStatement {
         }
     }
 
+    /// Executes the prepared statement with the given data.
+    /// Data must implement [IntoIterator] and [Serialize].
+    /// Each `Item` of the iterator will represent a data row.
+    ///
+    /// If `Item` is map-like, columns are re-ordered based on
+    /// the expected order by Exasol.
+    ///
+    /// If `Item` is sequence-like, the needed amount of columns is
+    /// taken from the data.
+    ///
+    /// # Errors
+    ///
+    /// Missing column names in map-like types or insufficient columns
+    /// in sequence-like types results in errors.
+    ///
+    /// ```
+    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use serde_json::Value;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// use serde_json::json;
+    /// use serde::Serialize;
+    ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let prep_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?, ?, ?)").unwrap();
+    ///
+    /// let json_data = json!(
+    ///     [
+    ///         ["a", "b", 1],
+    ///         ["c", "d", 2],
+    ///         ["e", "f", 3],
+    ///     ]
+    /// );
+    ///
+    /// prep_stmt.execute(json_data).unwrap();
+    ///
+    /// #[derive(Serialize, Clone)]
+    /// #[serde(rename_all("UPPERCASE"))]
+    /// struct Data {
+    ///     col1: String,
+    ///     col2: String,
+    ///     col3: u8
+    /// }
+    ///
+    /// let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
+    /// let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
+    ///
+    /// prep_stmt.execute(vec_data).unwrap();
+    ///
+    /// ```
     pub fn execute<T, S>(&self, data: T) -> Result<QueryResult>
     where
         S: Serialize,
