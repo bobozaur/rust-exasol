@@ -195,6 +195,46 @@ impl Connection {
             .map_err(DriverError::RequestError)?)
     }
 
+    /// Sets the fetch size in bytes when retrieving [ResultSet](crate::query::ResultSet) chunks
+    ///
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// // Size is in bytes
+    /// exa_con.set_fetch_size(2 * 1024 * 1024);
+    /// ```
+    #[inline]
+    pub fn set_fetch_size(&mut self, val: u32) {
+        (*self.con).borrow_mut().driver_attr.fetch_size = val;
+    }
+
+    /// Sets whether the [ResultSet](crate::query::ResultSet) [Column](crate::response::Column)
+    /// names will be implicitly cast to lowercase
+    ///
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// exa_con.set_lowercase_columns(false);
+    /// ```
+    #[inline]
+    pub fn set_lowercase_columns(&mut self, flag: bool) {
+        (*self.con).borrow_mut().driver_attr.lowercase_columns = flag;
+    }
+
     /// Sets autocommit mode On or Off
     ///
     /// ```
@@ -235,30 +275,6 @@ impl Connection {
         self.set_attributes(payload)
     }
 
-    /// Sets the fetch size in bytes when retrieving [ResultSet](crate::query::ResultSet) chunks
-    ///
-    /// ```
-    /// # use exasol::connect;
-    /// # use std::env;
-    /// #
-    /// # let dsn = env::var("EXA_DSN").unwrap();
-    /// # let schema = env::var("EXA_SCHEMA").unwrap();
-    /// # let user = env::var("EXA_USER").unwrap();
-    /// # let password = env::var("EXA_PASSWORD").unwrap();
-    /// #
-    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// // Size is in bytes
-    /// exa_con.set_fetch_size(2 * 1024 * 1024).unwrap();
-    /// ```
-    #[inline]
-    pub fn set_fetch_size(&mut self, val: usize) -> Result<()> {
-        (*self.con)
-            .borrow_mut()
-            .attr
-            .insert("fetch_size".to_owned(), json!(val));
-        Ok(())
-    }
-
     /// Sets the currently open schema
     ///
     /// ```
@@ -282,7 +298,7 @@ impl Connection {
     /// Sets connection attributes
     #[inline]
     fn set_attributes(&mut self, attr: Value) -> Result<()> {
-        (*self.con).borrow_mut().set_con_attr(attr)
+        (*self.con).borrow_mut().set_attributes(attr)
     }
 }
 
@@ -293,7 +309,8 @@ impl Connection {
 /// for row fetching or query execution.
 #[doc(hidden)]
 pub(crate) struct ConnectionImpl {
-    attr: HashMap<String, Value>,
+    pub(crate) driver_attr: DriverAttributes,
+    exa_attr: HashMap<String, Value>,
     ws: WebSocket<MaybeTlsStream<TcpStream>>,
     send: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>, Value) -> ReqResult<()>,
     recv: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response>,
@@ -320,7 +337,7 @@ impl Drop for ConnectionImpl {
 impl Debug for ConnectionImpl {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let str_attr = self
-            .attr
+            .exa_attr
             .iter()
             .map(|(k, v)| format!("{}: {}", k, v))
             .collect::<Vec<String>>()
@@ -341,38 +358,32 @@ impl ConnectionImpl {
     /// an error is returned.
     pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
         let ws = Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
-        let attr = HashMap::new();
+        let exa_attr = HashMap::new();
+
+        let driver_attr = DriverAttributes {
+            fetch_size: opts.get_fetch_size(),
+            lowercase_columns: opts.get_lowercase_columns(),
+        };
+
         let mut con = Self {
+            driver_attr,
+            exa_attr,
             ws,
-            attr,
             send,
             recv,
         };
 
-        // Should we use compression?
-        #[cfg(feature = "flate2")]
-        let compress = opts.get_compression();
-
-        // Login must always be uncompressed
         con.login(opts)?;
-
-        // Setting compression functions if needed
-        #[cfg(feature = "flate2")]
-        if compress {
-            con.send = compressed_send;
-            con.recv = compressed_recv;
-        }
-
-        con.get_con_attr()?;
+        con.get_attributes()?;
         Ok(con)
     }
 
     /// Sends an setAttributes request to Exasol
     /// And calls get_attributes for consistency
-    pub(crate) fn set_con_attr(&mut self, attrs: Value) -> Result<()> {
+    pub(crate) fn set_attributes(&mut self, attrs: Value) -> Result<()> {
         let payload = json!({"command": "setAttributes", "attributes": attrs});
         self.do_request(payload)?;
-        self.get_con_attr()?;
+        self.get_attributes()?;
         Ok(())
     }
 
@@ -478,22 +489,10 @@ impl ConnectionImpl {
 
         let (data, attr): (Option<ResponseData>, Option<Attributes>) = resp.try_into()?;
         if let Some(attributes) = attr {
-            self.attr.extend(attributes.map)
+            self.exa_attr.extend(attributes.map)
         }
 
         Ok(data)
-    }
-
-    /// Gets an attribute from the internal map
-    #[inline]
-    pub(crate) fn get_attr(&mut self, attr_name: &str) -> Option<&Value> {
-        self.attr.get(attr_name)
-    }
-
-    /// Stores an attribute in the internal map
-    #[inline]
-    pub(crate) fn set_attr(&mut self, attr_name: String, val: Value) {
-        self.attr.insert(attr_name, val);
     }
 
     /// Gets the database results as [crate::query_result::Results]
@@ -504,8 +503,9 @@ impl ConnectionImpl {
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         payload: Value,
     ) -> Result<Vec<QueryResult>> {
+        let lc = self.driver_attr.lowercase_columns;
         self.get_resp_data(payload)
-            .and_then(|r| r.try_to_query_results(con_impl))
+            .and_then(|r| r.try_to_query_results(con_impl, lc))
     }
 
     #[inline]
@@ -554,7 +554,7 @@ impl ConnectionImpl {
     }
 
     /// Gets connection attributes from Exasol
-    fn get_con_attr(&mut self) -> Result<()> {
+    fn get_attributes(&mut self) -> Result<()> {
         let payload = json!({"command": "getAttributes"});
         self.do_request(payload)?;
         Ok(())
@@ -576,9 +576,12 @@ impl ConnectionImpl {
 
     /// Authenticates to Exasol
     /// Called after the websocket is established
+    ///
+    /// Login is always uncompressed. If compression is enabled, it is set afterwards.
     fn login(&mut self, opts: ConOpts) -> Result<()> {
-        // Retain the result set fetch size in bytes
-        self.set_attr("fetch_size".to_owned(), json!(opts.get_fetch_size()));
+        // Should we use compression?
+        #[cfg(feature = "flate2")]
+        let compress = opts.get_compression();
 
         // Encrypt password using server's public key
         let key = self.get_public_key(opts.get_protocol_version())?;
@@ -586,8 +589,23 @@ impl ConnectionImpl {
 
         // Send login request
         self.do_request(payload)?;
+
+        // Setting compression functions if needed
+        #[cfg(feature = "flate2")]
+        if compress {
+            self.send = compressed_send;
+            self.recv = compressed_recv;
+        }
+
         Ok(())
     }
+}
+
+/// Struct holding driver related attributes
+/// unrelated to the Exasol connection itself
+pub(crate) struct DriverAttributes {
+    pub(crate) fetch_size: u32,
+    pub(crate) lowercase_columns: bool,
 }
 
 // Websocket communication functions, regular and compressed.

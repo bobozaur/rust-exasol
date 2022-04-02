@@ -52,7 +52,6 @@ mod tests {
             .unwrap();
 
         #[derive(Debug, Deserialize)]
-        #[serde(rename_all = "UPPERCASE")]
         struct Test {
             col1: u8,
             col2: u8,

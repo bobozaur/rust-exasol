@@ -1,7 +1,6 @@
 use crate::error::ConnectionError;
 use lazy_static::lazy_static;
 use rand::rngs::OsRng;
-use rand::seq::SliceRandom;
 use rand::thread_rng;
 use regex::{Captures, Regex};
 use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
@@ -11,7 +10,11 @@ use serde_json::{json, Value};
 use std::env;
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
+use rand::seq::SliceRandom;
+
+// Convenience alias
+type ConResult<T> = std::result::Result<T, ConnectionError>;
 
 /// Enum listing the protocol versions that can be used when
 /// establishing a websocket connection to Exasol.
@@ -95,6 +98,7 @@ pub(crate) struct InnerOpts {
     query_timeout: u32,
     use_encryption: bool,
     use_compression: bool,
+    lowercase_columns: bool,
     autocommit: bool,
 }
 
@@ -114,6 +118,7 @@ impl Display for InnerOpts {
              Query timeout: {}\n\
              Use encryption: {}\n\
              Use compression: {}\n\
+             Lowercase columns: {}\n
              Autocommit: {}",
             self.dsn.as_deref().unwrap_or(""),
             self.user.as_deref().unwrap_or(""),
@@ -127,6 +132,7 @@ impl Display for InnerOpts {
             self.query_timeout,
             self.use_encryption,
             self.use_compression,
+            self.lowercase_columns,
             self.autocommit
         )
     }
@@ -150,6 +156,7 @@ impl Default for InnerOpts {
             query_timeout: 0,
             use_encryption: false,
             use_compression: false,
+            lowercase_columns: true,
             autocommit: true,
         }
     }
@@ -293,15 +300,16 @@ impl ConOpts {
     pub fn get_encryption(&self) -> bool {
         self.0.use_encryption
     }
+
     /// Sets encryption by allowing the use of a secure websocket (WSS).
     #[inline]
-    #[cfg(any(feature = "native-tls", feature = "rustls"))]
+    #[allow(unused)]
     pub fn set_encryption(&mut self, flag: bool) {
-        self.0.use_encryption = flag
-    }
-
-    #[cfg(not(any(feature = "native-tls", feature = "rustls")))]
-    pub fn set_encryption(&mut self, _flag: bool) {
+        #[cfg(any(feature = "native-tls", feature = "rustls"))]
+        {
+            self.0.use_encryption = flag;
+        }
+        #[cfg(not(any(feature = "native-tls", feature = "rustls")))]
         panic!("native-tls or rustls features must be enabled to set encryption")
     }
 
@@ -313,14 +321,25 @@ impl ConOpts {
 
     /// Sets the compression flag.
     #[inline]
-    #[cfg(feature = "flate2")]
+    #[allow(unused)]
     pub fn set_compression(&mut self, flag: bool) {
-        self.0.use_compression = flag
+        #[cfg(feature = "flate2")]
+        {
+            self.0.use_compression = flag;
+        }
+        #[cfg(not(feature = "flate2"))]
+        panic!("flate2 feature must be enabled to set compression")
     }
 
-    #[cfg(not(feature = "flate2"))]
-    pub fn set_compression(&mut self, _flag: bool) {
-        panic!("flate2 feature must be enabled to set compression")
+    /// Lowercase column names flag (defaults to `true`)
+    #[inline]
+    pub fn get_lowercase_columns(&self) -> bool {
+        self.0.lowercase_columns
+    }
+
+    #[inline]
+    pub fn set_lowercase_columns(&mut self, flag: bool) {
+        self.0.lowercase_columns = flag;
     }
 
     /// Autocommit flag (defaults to `true`).
@@ -347,7 +366,7 @@ impl ConOpts {
     /// Parses the provided DSN to expand ranges and resolve IP addresses.
     /// Connection to all nodes will then be attempted in a random order
     /// until one is successful or all failed.
-    pub(crate) fn parse_dsn(&self) -> std::result::Result<Vec<String>, ConnectionError> {
+    pub(crate) fn parse_dsn(&self) -> ConResult<Vec<String>> {
         lazy_static! {
             static ref RE: Regex = Regex::new(r"(?x)
                     ^(.+?)                     # Hostname prefix
@@ -397,15 +416,10 @@ impl ConOpts {
                 // Now we have to resolve hostnames to IPs
                 let mut addresses = hosts
                     .into_iter()
-                    .map(|h| {
-                        Ok(h.to_socket_addrs()?
-                            .map(|ip| ip.to_string().split(':').take(1).collect())
-                            .collect::<Vec<String>>())
-                    })
-                    .collect::<std::result::Result<Vec<Vec<String>>, ConnectionError>>()?
+                    .map(|h| Self::host_to_ip_list(h, port))
+                    .collect::<ConResult<Vec<Vec<String>>>>()?
                     .into_iter()
                     .flatten()
-                    .map(|addr| format!("{}:{}", addr, port))
                     .collect::<Vec<String>>();
 
                 addresses.shuffle(&mut thread_rng());
@@ -415,10 +429,7 @@ impl ConOpts {
     }
 
     /// Encrypts the password with the provided key
-    pub(crate) fn encrypt_password(
-        &self,
-        public_key: RsaPublicKey,
-    ) -> std::result::Result<String, ConnectionError> {
+    pub(crate) fn encrypt_password(&self, public_key: RsaPublicKey) -> ConResult<String> {
         let mut rng = OsRng;
         let padding = PaddingScheme::new_pkcs1v15_encrypt();
         let pass_bytes = self.0.password.as_deref().unwrap_or("").as_bytes();
@@ -426,10 +437,7 @@ impl ConOpts {
         Ok(enc_pass)
     }
 
-    pub(crate) fn into_value(
-        self,
-        key: RsaPublicKey,
-    ) -> std::result::Result<Value, ConnectionError> {
+    pub(crate) fn into_value(self, key: RsaPublicKey) -> ConResult<Value> {
         Ok(json!({
         "username": self.0.user,
         "password": self.encrypt_password(key)?,
@@ -451,5 +459,27 @@ impl ConOpts {
     #[inline]
     fn get_dsn_part<'a>(cap: &'a Captures, index: usize) -> &'a str {
         cap.get(index).map_or("", |s| s.as_str())
+    }
+
+    /// Parses a socket address to an IP
+    #[inline]
+    fn sock_addr_to_ip(sa: SocketAddr) -> String {
+        sa.to_string().split(':').take(1).collect()
+    }
+
+    /// Resolves a hostname to a list of IP
+    #[inline]
+    fn host_to_ip_list(host: String, port: u16) -> ConResult<Vec<String>> {
+        Ok(host
+            .to_socket_addrs()?
+            .map(Self::sock_addr_to_ip)
+            .map(|ip| Self::fmt_ip(ip, port))
+            .collect::<Vec<String>>())
+    }
+
+    /// Adds port to an IP address
+    #[inline]
+    fn fmt_ip(ip: String, port: u16) -> String {
+        format!("{}:{}", ip, port)
     }
 }

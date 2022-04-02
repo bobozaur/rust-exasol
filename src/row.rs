@@ -484,11 +484,9 @@ impl Iterator for ColumnMajorIterator {
 ///
 ///  // Row variant can be chosen through internal tagging
 ///  #[derive(Deserialize)]
-///  #[serde(tag = "COL1", rename_all = "lowercase")]
+///  #[serde(tag = "col1", rename_all = "lowercase")]
 ///  enum SomeRow2 {
-///  #[serde(rename_all = "UPPERCASE")]
 ///     Val2 { col2: String },
-///  #[serde(rename_all = "UPPERCASE")]
 ///     Val1 { col2: String }
 ///  }
 ///

@@ -59,9 +59,10 @@ impl ResponseData {
     pub(crate) fn try_to_query_results(
         self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
+        lc: bool
     ) -> Result<Vec<QueryResult>> {
         match self {
-            Self::Results(res) => Ok(res.into_query_results(con_impl)),
+            Self::Results(res) => Ok(res.into_query_results(con_impl, lc)),
             _ => Err(
                 DriverError::RequestError(RequestError::InvalidResponse("query results")).into(),
             ),
@@ -187,10 +188,11 @@ impl Results {
     pub(crate) fn into_query_results(
         self,
         con_rc: &Rc<RefCell<ConnectionImpl>>,
+        lc: bool,
     ) -> Vec<QueryResult> {
         self.results
             .into_iter()
-            .map(|q| QueryResult::from_de(q, con_rc))
+            .map(|q| QueryResult::from_de(q, con_rc, lc))
             .collect()
     }
 }

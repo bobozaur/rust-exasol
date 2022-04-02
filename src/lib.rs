@@ -176,7 +176,7 @@
 //! # Panics
 //! Attempting to use these methods without their respective features enabled results in panics.
 //!
-//! ``` ignore
+//! ``` should_panic
 //! # use exasol::{ConOpts, Connection};
 //! # use std::env;
 //! #

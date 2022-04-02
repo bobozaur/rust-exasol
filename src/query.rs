@@ -56,12 +56,13 @@ impl TryFrom<QueryResult> for u32 {
 impl QueryResult {
     #[inline]
     pub(crate) fn from_de(
-        query_result: QueryResultDe,
+        qr: QueryResultDe,
         con_rc: &Rc<RefCell<ConnectionImpl>>,
+        lc: bool
     ) -> Self {
-        match query_result {
+        match qr {
             QueryResultDe::ResultSet { result_set } => {
-                QueryResult::ResultSet(ResultSet::from_de(result_set, con_rc))
+                QueryResult::ResultSet(ResultSet::from_de(result_set, con_rc, lc))
             }
             QueryResultDe::RowCount { row_count } => QueryResult::RowCount(row_count),
         }
@@ -203,16 +204,26 @@ where
     }
 
     /// Method that generates the [ResultSet] struct based on [ResultSetDe].
-    pub(crate) fn from_de(result_set: ResultSetDe, con_rc: &Rc<RefCell<ConnectionImpl>>) -> Self {
+    /// It will also remap column names to their lowercase representation if needed.
+    pub(crate) fn from_de(mut rs: ResultSetDe, con_rc: &Rc<RefCell<ConnectionImpl>>, lc: bool) -> Self {
+        // Set column names as lowercase if needed
+        match lc {
+            false => (),
+            true => rs
+                .columns
+                .iter_mut()
+                .for_each(|c| c.name = c.name.to_lowercase()),
+        }
+
         Self {
-            num_columns: result_set.num_columns,
-            total_rows_num: result_set.total_rows_num,
+            num_columns: rs.num_columns,
+            total_rows_num: rs.total_rows_num,
             total_rows_pos: 0,
-            chunk_rows_num: result_set.chunk_rows_num,
+            chunk_rows_num: rs.chunk_rows_num,
             chunk_rows_pos: 0,
-            result_set_handle: result_set.result_set_handle,
-            columns: result_set.columns,
-            data_iter: result_set.data.into_iter(),
+            result_set_handle: rs.result_set_handle,
+            columns: rs.columns,
+            data_iter: rs.data.into_iter(),
             connection: Rc::clone(con_rc),
             is_closed: false,
             row_type: PhantomData,
@@ -251,9 +262,7 @@ where
             .and_then(|h| {
                 // Dereference connection
                 let mut con = (*self.connection).borrow_mut();
-
-                // Safe to unwrap as this will always be present due to ConOpts
-                let fetch_size = con.get_attr("fetch_size").unwrap();
+                let fetch_size = con.driver_attr.fetch_size;
 
                 // Compose the payload
                 let payload = json!({
@@ -263,6 +272,7 @@ where
                     "numBytes": fetch_size,
                 });
 
+                // Fetch and store data chunk
                 con.get_resp_data(payload)?.try_to_fetched_data().map(|f| {
                     self.chunk_rows_num = f.chunk_rows_num;
                     self.chunk_rows_pos = 0;
@@ -376,9 +386,8 @@ impl PreparedStatement {
     ///  prep_stmt.execute(json_data.as_array().unwrap()).unwrap();
     /// #
     /// # #[derive(Serialize, Clone)]
-    /// # #[serde(rename_all = "UPPERCASE")]
     /// # struct Data {
-    /// #     col1: String,
+    /// #    col1: String,
     /// #    col2: String,
     /// #    col3: u8
     /// # }
