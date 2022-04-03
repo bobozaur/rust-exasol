@@ -142,6 +142,11 @@
 //! The function takes a string and a type implementing the [Serialize](serde::Serialize) trait.
 //! The second argument must serialize to a sequence or map.
 //!
+//! Named parameter values behaviour:
+//! * single value type get parsed to their SQL representation
+//! * sequence-like types get parsed to a parenthesized list with elements in SQL representation
+//! * map-like types get their values parsed to a parenthesized list with elements in SQL representation
+//!
 //! ```
 //! use exasol::bind;
 //! use serde::Serialize;

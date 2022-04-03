@@ -23,7 +23,7 @@ type BindResult = std::result::Result<String, BindError>;
 /// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE2', 'VALUE1');", new_query);
 /// ```
 ///
-/// `:` chars in string literals must be escaped if they're not part of a parameter:
+/// String literals resembling a parameter can be escaped:
 ///
 /// ```
 /// use exasol::bind;
