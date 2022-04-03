@@ -32,7 +32,7 @@ type BindResult = std::result::Result<String, BindError>;
 /// let query = "INSERT INTO MY_TABLE VALUES(:1, :0, 'str \\:str');";
 /// let new_query = bind(query, params).unwrap();
 ///
-/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE2', 'VALUE1', 'str \\:str');", new_query);
+/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE2', 'VALUE1', 'str :str');", new_query);
 /// ```
 ///
 /// ```
@@ -121,20 +121,22 @@ fn parametrize_query(query: &str, val: Value) -> BindResult {
 #[inline]
 fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"[:\w\\]:\w+|:\w+:|:(\w+)").unwrap();
+        static ref RE: Regex = Regex::new(r"\\(:\w+)|[:\w]:\w+|:\w+:|:(\w+)").unwrap();
     }
 
     let dummy = ""; // placeholder
     let mut result = Ok(dummy.to_owned()); // Will store errors here
 
-    // If capture group 1 is None, then we only matched the regex expressions
-    // that we purposely ignore, in which case we return a string slice from the query
-    // representing th exact full match -> we replace a string with itself.
+    // Capture group 1 is Some only when an escaped parameter construct
+    // is matched. Returning the group gets rid of the escape backslash.
     //
-    // If capture group 1 is Some, then we look in the map and replace
-    // the parameter with it's corresponded value, storing errors if encountered.
+    // Capture group 2 is Some when an actual parameter is matched,
+    // in which case it needs to be taken from the map.
+    //
+    // Otherwise, the entire match is returned as-is, as it represents
+    // a regex match that we purposely ignore.
     let q = RE.replace_all(query, |cap: &Captures| {
-        cap.get(1)
+        cap.get(2)
             .map(|m| match map.get(m.as_str()) {
                 Some(k) => k.as_str(),
                 None => {
@@ -142,6 +144,7 @@ fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
                     dummy
                 }
             })
+            .or_else(|| cap.get(1).map(|m|&query[m.range()]))
             .unwrap_or(&query[cap.get(0).unwrap().range()])
     });
 
