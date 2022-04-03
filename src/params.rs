@@ -13,7 +13,6 @@ type BindResult = std::result::Result<String, BindError>;
 ///
 /// Returns a Result containing the formatted string or an Error if any parameters are missing.
 ///
-///
 /// ```
 /// use exasol::bind;
 ///
@@ -22,6 +21,21 @@ type BindResult = std::result::Result<String, BindError>;
 /// let new_query = bind(query, params).unwrap();
 ///
 /// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE2', 'VALUE1');", new_query);
+/// ```
+///
+/// ```
+/// use std::collections::HashMap;
+/// use exasol::bind;
+///
+/// let params = HashMap::from([
+///     ("COL".to_owned(), "VALUE1"),
+///     ("COL2".to_owned(), "VALUE2")
+/// ]);
+///
+/// let query = "INSERT INTO MY_TABLE VALUES(:COL, :COL2);";
+/// let new_query = bind(query, params).unwrap();
+///
+/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE1', 'VALUE2');", new_query);
 /// ```
 ///
 /// ```
@@ -42,18 +56,34 @@ type BindResult = std::result::Result<String, BindError>;
 /// ```
 ///
 /// ```
-/// use std::collections::HashMap;
 /// use exasol::bind;
+/// use serde::Serialize;
 ///
-/// let params = HashMap::from([
-///     ("COL".to_owned(), "VALUE1"),
-///     ("COL2".to_owned(), "VALUE2")
-/// ]);
+/// #[derive(Serialize)]
+/// struct Parameters {
+///     col1: String,
+///     col2: u16,
+///     col3: Vec<String>
+/// }
 ///
-/// let query = "INSERT INTO MY_TABLE VALUES(:COL, :COL2);";
+/// let params = Parameters {
+///     col1: "test".to_owned(),
+///     col2: 10,
+///     col3: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]
+/// };
+///
+/// let query = "\
+///     SELECT * FROM TEST_TABLE \
+///     WHERE NAME = :col1 \
+///     AND ID = :col2 \
+///     AND VALUE IN :col3;";
+///
 /// let new_query = bind(query, params).unwrap();
-///
-/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE1', 'VALUE2');", new_query);
+/// assert_eq!(new_query, "\
+///     SELECT * FROM TEST_TABLE \
+///     WHERE NAME = 'test' \
+///     AND ID = 10 \
+///     AND VALUE IN ('a', 'b', 'c');");
 /// ```
 pub fn bind<T>(query: &str, params: T) -> Result<String>
 where
@@ -69,14 +99,14 @@ where
 #[inline]
 fn parametrize_query(query: &str, val: Value) -> BindResult {
     match val {
-        Value::Object(o) => bind_map_params(query, gen_map_params(o)),
-        Value::Array(a) => bind_seq_params(query, gen_seq_params(a)),
+        Value::Object(o) => do_param_binding(query, gen_map_params(o)),
+        Value::Array(a) => do_param_binding(query, gen_seq_params(a)),
         _ => Err(BindError::SerializeError),
     }
 }
 
 /// Bind map elements to the query
-fn bind_map_params(query: &str, map: HashMap<String, String>) -> BindResult {
+fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"[:\w\\]:\w+|:\w+:|(:(\w+))").unwrap();
     }
@@ -95,36 +125,6 @@ fn bind_map_params(query: &str, map: HashMap<String, String>) -> BindResult {
     result.and(Ok(q.into_owned()))
 }
 
-/// Bind sequence elements to the query
-fn bind_seq_params(query: &str, arr: Vec<String>) -> BindResult {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"[:\d\\]:\d+|:\d+:|(:(\d+))").unwrap();
-    }
-
-    let dummy = "".to_owned(); // placeholder
-    let mut res1 = Ok(&dummy); // Will store errors here
-    let mut res2 = Ok(0usize); // Will store errors here
-
-    let q = RE.replace_all(query, |cap: &Captures| {
-        let index = cap[2].parse();
-        match index {
-            Ok(i) => match arr.get(i) {
-                Some(k) => k,
-                None => {
-                    res1 = Err(BindError::MappingError(cap[1].to_owned()));
-                    &dummy
-                }
-            },
-            Err(_) => {
-                res2 = index.map_err(BindError::ParseIntError);
-                &dummy
-            }
-        }
-    });
-
-    res1.and(res2).and(Ok(q.into_owned()))
-}
-
 /// Generates a `HashMap<String, String>` of the params SQL representation.
 #[inline]
 fn gen_map_params(params: Map<String, Value>) -> HashMap<String, String> {
@@ -136,35 +136,49 @@ fn gen_map_params(params: Map<String, Value>) -> HashMap<String, String> {
 
 /// Generates a `Vec<String>` of the params SQL representation.
 #[inline]
-fn gen_seq_params(params: Vec<Value>) -> Vec<String> {
-    params.into_iter().map(into_sql_param).collect()
+fn gen_seq_params(params: Vec<Value>) -> HashMap<String, String> {
+    params
+        .into_iter()
+        .enumerate()
+        .map(|(i, v)| (i.to_string(), into_sql_param(v)))
+        .collect()
 }
 
 /// Transforms [Value] to it's SQL string representation
 fn into_sql_param(val: Value) -> String {
     match val {
         Value::Null => "NULL".to_owned(),
-        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+        Value::String(s) => ["'", &s.replace('\'', "''"), "'"].concat(),
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => match b {
             true => "1".to_owned(),
             false => "0".to_owned(),
         },
         Value::Array(a) => {
-            let vec = a
-                .into_iter()
-                .map(into_sql_param)
-                .collect::<Vec<String>>()
-                .join(", ");
-            format!("({})", vec)
+            let iter = a.into_iter().map(into_sql_param);
+            build_param_list(iter)
         }
         Value::Object(o) => {
-            let vec = o
-                .into_iter()
-                .map(|(_, v)| into_sql_param(v))
-                .collect::<Vec<String>>()
-                .join(", ");
-            format!("({})", vec)
+            let iter = o.into_iter().map(|(_, v)| into_sql_param(v));
+            build_param_list(iter)
         }
     }
+}
+
+/// Concatenates an iterator of Strings into a parameter list
+/// such as "(a, b, c)"
+#[inline]
+fn build_param_list<I>(iter: I) -> String
+where I: Iterator<Item = String> {
+    let mut str_params = "(".to_string();
+
+    iter.for_each(|s| {
+        str_params.push_str(&s);
+        str_params.push_str(", ");
+    });
+
+    str_params.pop();
+    str_params.pop();
+    str_params.push(')');
+    str_params
 }

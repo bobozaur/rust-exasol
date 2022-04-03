@@ -143,25 +143,34 @@
 //! The second argument must serialize to a sequence or map.
 //!
 //! ```
-//! use serde_json::json;
 //! use exasol::bind;
+//! use serde::Serialize;
 //!
-//! let params = vec!["VALUE1", "VALUE2"];
-//! let query = "INSERT INTO MY_TABLE VALUES(:1, :0);";
+//! #[derive(Serialize)]
+//! struct Parameters {
+//!     col1: String,
+//!     col2: u16,
+//!     col3: Vec<String>
+//! }
+//!
+//! let params = Parameters {
+//!     col1: "test".to_owned(),
+//!     col2: 10,
+//!     col3: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]
+//! };
+//!
+//! let query = "\
+//!     SELECT * FROM TEST_TABLE \
+//!     WHERE NAME = :col1 \
+//!     AND ID = :col2 \
+//!     AND VALUE IN :col3;";
+//!
 //! let new_query = bind(query, params).unwrap();
-//!
-//! assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE2', 'VALUE1');", new_query);
-//!
-//! let j = json!({
-//!     "COL1": "'TEST",
-//!     "COL2": 5
-//! });
-//!
-//! let params = j.as_object().unwrap();
-//! let query = "INSERT INTO MY_TABLE VALUES(:COL1, :COL1, :COL2);";
-//! let new_query = bind(query, params).unwrap();
-//!
-//! assert_eq!("INSERT INTO MY_TABLE VALUES('''TEST', '''TEST', 5);", new_query);
+//! assert_eq!(new_query, "\
+//!     SELECT * FROM TEST_TABLE \
+//!     WHERE NAME = 'test' \
+//!     AND ID = 10 \
+//!     AND VALUE IN ('a', 'b', 'c');");
 //! ```
 //!
 //! # Custom Connection
