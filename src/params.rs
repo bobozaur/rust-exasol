@@ -106,6 +106,7 @@ fn parametrize_query(query: &str, val: Value) -> BindResult {
 }
 
 /// Bind map elements to the query
+#[inline]
 fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
     lazy_static! {
         static ref RE: Regex = Regex::new(r"[:\w\\]:\w+|:\w+:|(:(\w+))").unwrap();
@@ -145,6 +146,7 @@ fn gen_seq_params(params: Vec<Value>) -> HashMap<String, String> {
 }
 
 /// Transforms [Value] to it's SQL string representation
+#[inline]
 fn into_sql_param(val: Value) -> String {
     match val {
         Value::Null => "NULL".to_owned(),
