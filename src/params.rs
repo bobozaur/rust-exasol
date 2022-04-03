@@ -1,6 +1,6 @@
 use crate::error::{BindError, DriverError, Result};
-use lazy_static::lazy_static;
-use regex::{Captures, Regex};
+use lazy_regex::regex;
+use regex::Captures;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -120,10 +120,7 @@ fn parametrize_query(query: &str, val: Value) -> BindResult {
 /// Bind map elements to the query
 #[inline]
 fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"\\(:\w+)|[:\w]:\w+|:\w+:|:(\w+)").unwrap();
-    }
-
+    let re = regex!(r"\\(:\w+)|[:\w]:\w+|:\w+:|:(\w+)");
     let mut result = Ok(String::new()); // Will store errors here
 
     // Capture group 1 is Some only when an escaped parameter construct
@@ -134,7 +131,7 @@ fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
     //
     // Otherwise, the entire match is returned as-is, as it represents
     // a regex match that we purposely ignore.
-    let q = RE.replace_all(query, |cap: &Captures| {
+    let q = re.replace_all(query, |cap: &Captures| {
         cap.get(2)
             .map(|m| match map.get(m.as_str()) {
                 Some(k) => k.as_str(),
@@ -143,14 +140,15 @@ fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
                     ""
                 }
             })
-            .or_else(|| cap.get(1).map(|m|&query[m.range()]))
+            .or_else(|| cap.get(1).map(|m| &query[m.range()]))
             .unwrap_or(&query[cap.get(0).unwrap().range()])
     });
 
     result.and(Ok(q.into_owned()))
 }
 
-/// Generates a `HashMap<String, String>` of the params SQL representation.
+/// Generates a `HashMap<String, String>` of the params SQL representation,
+/// where the key is the column name and the value is the SQL param.
 #[inline]
 fn gen_map_params(params: Map<String, Value>) -> HashMap<String, String> {
     params
@@ -159,7 +157,8 @@ fn gen_map_params(params: Map<String, Value>) -> HashMap<String, String> {
         .collect()
 }
 
-/// Generates a `Vec<String>` of the params SQL representation.
+/// Generates a `HashMap<String, String>` of the params SQL representation,
+/// where the key is the index and the value is the SQL param.
 #[inline]
 fn gen_seq_params(params: Vec<Value>) -> HashMap<String, String> {
     params

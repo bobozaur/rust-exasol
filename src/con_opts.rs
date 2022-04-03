@@ -1,8 +1,9 @@
 use crate::error::ConnectionError;
-use lazy_static::lazy_static;
+use lazy_regex::regex;
 use rand::rngs::OsRng;
+use rand::seq::SliceRandom;
 use rand::thread_rng;
-use regex::{Captures, Regex};
+use regex::Captures;
 use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -11,7 +12,6 @@ use std::env;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::net::{SocketAddr, ToSocketAddrs};
-use rand::seq::SliceRandom;
 
 // Convenience alias
 type ConResult<T> = std::result::Result<T, ConnectionError>;
@@ -367,19 +367,19 @@ impl ConOpts {
     /// Connection to all nodes will then be attempted in a random order
     /// until one is successful or all failed.
     pub(crate) fn parse_dsn(&self) -> ConResult<Vec<String>> {
-        lazy_static! {
-            static ref RE: Regex = Regex::new(r"(?x)
+        let re = regex!(
+            r"(?x)
                     ^(.+?)                     # Hostname prefix
                     (?:(\d+)\.\.(\d+)(.*?))?   # Optional range and hostname suffix (e.g. hostname1..4.com)
                     (?:/([0-9A-Fa-f]+))?       # Optional fingerprint (e.g. hostname1..4.com/135a1d2dce102de866f58267521f4232153545a075dc85f8f7596f57e588a181)
                     (?::(\d+)?)?$              # Optional port (e.g. hostname1..4.com:8564)
-                    ").unwrap();
-        }
+                    "
+        );
 
         self.0
             .dsn
             .as_deref()
-            .and_then(|dsn| RE.captures(dsn))
+            .and_then(|dsn| re.captures(dsn))
             .ok_or(ConnectionError::InvalidDSN)
             .and_then(|cap| {
                 // Parse capture groups from regex

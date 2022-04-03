@@ -1,3 +1,6 @@
+use lazy_regex::regex;
+use regex::Captures;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -149,7 +152,65 @@ impl Connection {
 
     /// Creates a prepared statement of type [PreparedStatement].
     /// The prepared statement can then be executed with the provided data.
+    ///
+    /// Unique named parameters are supported to aid in using map-like types as data rows
+    /// when executing the prepared statement. Using just `?` results in the parameter name
+    /// being the empty string.
+    ///
+    /// The names must be unique as the associated values get consumed, therefore a duplicate
+    /// name won't result in a value on look-up.
+    ///
+    /// For sequence-like types, parameter names are ignored and discarded.
+    ///
     /// ```
+    /// use exasol::{connect, QueryResult, PreparedStatement};
+    /// use exasol::error::Result;
+    /// use serde_json::json;
+    /// use std::env;
+    ///
+    /// let dsn = env::var("EXA_DSN").unwrap();
+    /// let schema = env::var("EXA_SCHEMA").unwrap();
+    /// let user = env::var("EXA_USER").unwrap();
+    /// let password = env::var("EXA_PASSWORD").unwrap();
+    ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let prepared_stmt: PreparedStatement = exa_con.prepare("SELECT 1 FROM (SELECT 1) TMP WHERE 1 = ?").unwrap();
+    /// let data = vec![vec![json!(1)]];
+    /// prepared_stmt.execute(&data).unwrap();
+    /// ```
+    ///
+    /// ```
+    /// use exasol::{connect, QueryResult, PreparedStatement};
+    /// use exasol::error::Result;
+    /// use serde_json::json;
+    /// use serde::Serialize;
+    /// use std::env;
+    ///
+    /// let dsn = env::var("EXA_DSN").unwrap();
+    /// let schema = env::var("EXA_SCHEMA").unwrap();
+    /// let user = env::var("EXA_USER").unwrap();
+    /// let password = env::var("EXA_PASSWORD").unwrap();
+    ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let prepared_stmt: PreparedStatement = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?col1, ?col2, ?col3)").unwrap();
+    ///
+    /// #[derive(Serialize, Clone)]
+    /// struct Data {
+    ///    col1: String,
+    ///    col2: String,
+    ///    col3: u8
+    /// }
+    ///
+    /// let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
+    /// let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
+    ///
+    /// prepared_stmt.execute(vec_data).unwrap();
+    /// ```
+    ///
+    /// String literals resembling a parameter can be escaped, if, for any reason, needed:
+    /// (Exasol doesn't really seem to like combining parameters with literals in prepared statements)
+    ///
+    /// ``` should_panic
     /// # use exasol::{connect, QueryResult, PreparedStatement};
     /// # use exasol::error::Result;
     /// # use serde_json::json;
@@ -161,16 +222,16 @@ impl Connection {
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let prepared_stmt: PreparedStatement = exa_con.prepare("SELECT 1 FROM (SELECT 1) TMP WHERE 1 = ?").unwrap();
-    /// let data = vec![vec![json!(1)]];
+    /// let prepared_stmt: PreparedStatement = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES('\\?col1', ?col2, ?col3)").unwrap();
+    /// let data = vec![json!(["test", 1])];
     /// prepared_stmt.execute(&data).unwrap();
     /// ```
     #[inline]
-    pub fn prepare<T>(&mut self, query: T) -> Result<PreparedStatement>
+    pub fn prepare<'a, T>(&mut self, query: T) -> Result<PreparedStatement>
     where
-        T: AsRef<str> + Serialize,
+        T: Serialize + Into<Cow<'a, str>>,
     {
-        (*self.con).borrow_mut().prepare(&self.con, &query)
+        (*self.con).borrow_mut().prepare(&self.con, query)
     }
 
     /// Ping the server and wait for a Pong frame
@@ -435,17 +496,32 @@ impl ConnectionImpl {
     }
 
     /// Creates a prepared statement
-    pub(crate) fn prepare<T>(
+    pub(crate) fn prepare<'a, T>(
         &mut self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
-        query: &T,
+        query: T,
     ) -> Result<PreparedStatement>
     where
-        T: AsRef<str> + Serialize,
+        T: Serialize + Into<Cow<'a, str>>,
     {
-        let payload = json!({"command": "createPreparedStatement", "sqlText": query});
+        let re = regex!(r"\\(\?\w*)|[?\w]\?\w*|\?\w*\?|\?(\w*)");
+        let mut col_names = Vec::new();
+        let cow_q = query.into();
+        let x = cow_q.as_ref();
+
+        let q = re.replace_all(x, |cap: &Captures| {
+            cap.get(2)
+                .map(|m| {
+                    col_names.push(m.as_str().to_owned());
+                    "?"
+                })
+                .or_else(|| cap.get(1).map(|m| &x[m.range()]))
+                .unwrap_or(&x[cap.get(0).unwrap().range()])
+        });
+
+        let payload = json!({"command": "createPreparedStatement", "sqlText": q});
         self.get_resp_data(payload)
-            .and_then(|r| r.try_to_prepared_stmt(con_impl))
+            .and_then(|r| r.try_to_prepared_stmt(con_impl, col_names))
     }
 
     /// Closes a result set

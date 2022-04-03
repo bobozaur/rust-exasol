@@ -1,6 +1,6 @@
 [package]
 name = "exasol"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 authors = ["bobozaur"]
 description = "Exasol client library implemented in Rust."
@@ -19,7 +19,7 @@ rsa = "0.5.0"
 serde_json = "1.0.74"
 serde = {version = "1.0.133", features = ["derive"]}
 regex = "1.5.4"
-lazy_static = "1.4.0"
+lazy-regex = "2.3.0"
 thiserror = "1.0.30"
 flate2 = { version = "1.0.22", optional = true }
 

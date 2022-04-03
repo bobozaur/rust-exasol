@@ -59,7 +59,7 @@ impl ResponseData {
     pub(crate) fn try_to_query_results(
         self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
-        lc: bool
+        lc: bool,
     ) -> Result<Vec<QueryResult>> {
         match self {
             Self::Results(res) => Ok(res.into_query_results(con_impl, lc)),
@@ -74,9 +74,12 @@ impl ResponseData {
     pub(crate) fn try_to_prepared_stmt(
         self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
+        column_names: Vec<String>,
     ) -> Result<PreparedStatement> {
         match self {
-            Self::PreparedStatement(res) => Ok(PreparedStatement::from_de(res, con_impl)),
+            Self::PreparedStatement(res) => {
+                Ok(PreparedStatement::from_de(res, con_impl, column_names))
+            }
             _ => Err(DriverError::RequestError(RequestError::InvalidResponse(
                 "prepared statement",
             ))

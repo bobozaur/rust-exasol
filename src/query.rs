@@ -58,7 +58,7 @@ impl QueryResult {
     pub(crate) fn from_de(
         qr: QueryResultDe,
         con_rc: &Rc<RefCell<ConnectionImpl>>,
-        lc: bool
+        lc: bool,
     ) -> Self {
         match qr {
             QueryResultDe::ResultSet { result_set } => {
@@ -205,7 +205,11 @@ where
 
     /// Method that generates the [ResultSet] struct based on [ResultSetDe].
     /// It will also remap column names to their lowercase representation if needed.
-    pub(crate) fn from_de(mut rs: ResultSetDe, con_rc: &Rc<RefCell<ConnectionImpl>>, lc: bool) -> Self {
+    pub(crate) fn from_de(
+        mut rs: ResultSetDe,
+        con_rc: &Rc<RefCell<ConnectionImpl>>,
+        lc: bool,
+    ) -> Self {
         // Set column names as lowercase if needed
         match lc {
             false => (),
@@ -328,6 +332,7 @@ pub struct PreparedStatement {
     statement_handle: usize,
     parameter_data: Option<ParameterData>,
     connection: Rc<RefCell<ConnectionImpl>>,
+    column_names: Vec<String>,
 }
 
 impl PreparedStatement {
@@ -335,11 +340,13 @@ impl PreparedStatement {
     pub(crate) fn from_de(
         prep_stmt: PreparedStatementDe,
         con_rc: &Rc<RefCell<ConnectionImpl>>,
+        col_names: Vec<String>,
     ) -> Self {
         Self {
             statement_handle: prep_stmt.statement_handle,
             parameter_data: prep_stmt.parameter_data,
             connection: Rc::clone(con_rc),
+            column_names: col_names,
         }
     }
 
@@ -347,16 +354,18 @@ impl PreparedStatement {
     /// Data must implement [IntoIterator] and [Serialize].
     /// Each `Item` of the iterator will represent a data row.
     ///
-    /// If `Item` is map-like, columns are re-ordered based on
-    /// the expected order by Exasol.
+    /// If `Item` is map-like, columns are uniquely re-ordered based on
+    /// the expected order given through the named parameters.
     ///
     /// If `Item` is sequence-like, the needed amount of columns is
-    /// taken from the data.
+    /// taken from the data. Parameter names are ignored.
+    ///
+    /// Excess data is discarded.
     ///
     /// # Errors
     ///
-    /// Missing column names in map-like types or insufficient columns
-    /// in sequence-like types results in errors.
+    /// Missing parameter names in map-like types (which can also be caused by duplication)
+    /// or insufficient columns in sequence-like types results in errors.
     ///
     /// ```
     /// # use exasol::{connect, QueryResult};
@@ -373,30 +382,29 @@ impl PreparedStatement {
     /// use serde::Serialize;
     ///
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let prep_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?, ?, ?)").unwrap();
+    /// let prep_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?col1, ?col2, ?col3)").unwrap();
     ///
     /// let json_data = json!(
     ///     [
-    ///         ["a", "b", 1],
-    ///         ["c", "d", 2],
-    ///         ["e", "f", 3],
+    ///         ["a", "b", 1, "x"],
+    ///         ["c", "d", 2, "x"],
+    ///         ["e", "f", 3, "x"],
     ///     ]
     /// );
     ///
-    ///  prep_stmt.execute(json_data.as_array().unwrap()).unwrap();
-    /// #
-    /// # #[derive(Serialize, Clone)]
-    /// # struct Data {
-    /// #    col1: String,
-    /// #    col2: String,
-    /// #    col3: u8
-    /// # }
-    /// #
-    /// # let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
-    /// # let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
-    /// #
-    /// # // prep_stmt.execute(vec_data).unwrap();
-    /// #
+    /// prep_stmt.execute(json_data.as_array().unwrap()).unwrap();
+    ///
+    /// #[derive(Serialize, Clone)]
+    /// struct Data {
+    ///    col1: String,
+    ///    col2: String,
+    ///    col3: u8
+    /// }
+    ///
+    /// let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
+    /// let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
+    ///
+    /// prep_stmt.execute(vec_data).unwrap();
     /// ```
     pub fn execute<T, S>(&self, data: T) -> Result<QueryResult>
     where
@@ -408,10 +416,12 @@ impl PreparedStatement {
             None => (&0, [].as_slice()),
         };
 
-        let col_names = columns
+        let col_names = self
+            .column_names
             .iter()
-            .map(|c| c.name.as_str())
+            .map(|c| c.as_str())
             .collect::<Vec<&str>>();
+
         let col_major_data = to_col_major(&col_names, data).map_err(DriverError::DataError)?;
 
         let payload = json!({

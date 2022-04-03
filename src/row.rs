@@ -381,7 +381,8 @@ fn col_major_map_data() {
 /// This data is then ready to be JSON serialized and sent to Exasol.
 ///
 /// Sequence-like data is processed as such, and the columns are merely used to assert length.
-/// Map-like data though requires columns so the data is processed in the expected order.
+/// Map-like data though requires columns so the data is processed in the expected order. Also,
+/// duplicate columns are not supported, as column values from the map get consumed.
 pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> DataResult<Vec<Vec<Value>>>
 where
     S: Serialize,
@@ -427,7 +428,7 @@ fn take_arr_values(arr: Vec<Value>, len: usize) -> DataResult<Vec<Value>> {
     let arr_len = arr.len();
     match len > arr_len {
         true => Err(DataError::InsufficientData(len, arr_len)),
-        false => Ok(arr.into_iter().take(arr_len).collect()),
+        false => Ok(arr.into_iter().take(len).collect()),
     }
 }
 
