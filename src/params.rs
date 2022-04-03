@@ -124,8 +124,7 @@ fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
         static ref RE: Regex = Regex::new(r"\\(:\w+)|[:\w]:\w+|:\w+:|:(\w+)").unwrap();
     }
 
-    let dummy = ""; // placeholder
-    let mut result = Ok(dummy.to_owned()); // Will store errors here
+    let mut result = Ok(String::new()); // Will store errors here
 
     // Capture group 1 is Some only when an escaped parameter construct
     // is matched. Returning the group gets rid of the escape backslash.
@@ -141,7 +140,7 @@ fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
                 Some(k) => k.as_str(),
                 None => {
                     result = Err(BindError::MappingError(cap[0].to_owned()));
-                    dummy
+                    ""
                 }
             })
             .or_else(|| cap.get(1).map(|m|&query[m.range()]))
