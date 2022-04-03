@@ -23,6 +23,18 @@ type BindResult = std::result::Result<String, BindError>;
 /// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE2', 'VALUE1');", new_query);
 /// ```
 ///
+/// `:` chars in string literals must be escaped if they're not part of a parameter:
+///
+/// ```
+/// use exasol::bind;
+///
+/// let params = vec!["VALUE1", "VALUE2"];
+/// let query = "INSERT INTO MY_TABLE VALUES(:1, :0, 'str \\:str');";
+/// let new_query = bind(query, params).unwrap();
+///
+/// assert_eq!("INSERT INTO MY_TABLE VALUES('VALUE2', 'VALUE1', 'str \\:str');", new_query);
+/// ```
+///
 /// ```
 /// use std::collections::HashMap;
 /// use exasol::bind;
@@ -109,18 +121,28 @@ fn parametrize_query(query: &str, val: Value) -> BindResult {
 #[inline]
 fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"[:\w\\]:\w+|:\w+:|(:(\w+))").unwrap();
+        static ref RE: Regex = Regex::new(r"[:\w\\]:\w+|:\w+:|:(\w+)").unwrap();
     }
 
     let dummy = ""; // placeholder
     let mut result = Ok(dummy.to_owned()); // Will store errors here
 
-    let q = RE.replace_all(query, |cap: &Captures| match map.get(&cap[2]) {
-        Some(k) => k,
-        None => {
-            result = Err(BindError::MappingError(cap[1].to_owned()));
-            dummy
-        }
+    // If capture group 1 is None, then we only matched the regex expressions
+    // that we purposely ignore, in which case we return a string slice from the query
+    // representing th exact full match -> we replace a string with itself.
+    //
+    // If capture group 1 is Some, then we look in the map and replace
+    // the parameter with it's corresponded value, storing errors if encountered.
+    let q = RE.replace_all(query, |cap: &Captures| {
+        cap.get(1)
+            .map(|m| match map.get(m.as_str()) {
+                Some(k) => k.as_str(),
+                None => {
+                    result = Err(BindError::MappingError(cap[0].to_owned()));
+                    dummy
+                }
+            })
+            .unwrap_or(&query[cap.get(0).unwrap().range()])
     });
 
     result.and(Ok(q.into_owned()))
@@ -171,7 +193,9 @@ fn into_sql_param(val: Value) -> String {
 /// such as "(a, b, c)"
 #[inline]
 fn build_param_list<I>(iter: I) -> String
-where I: Iterator<Item = String> {
+where
+    I: Iterator<Item = String>,
+{
     let mut str_params = "(".to_string();
 
     iter.for_each(|s| {
