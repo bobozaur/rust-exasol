@@ -171,7 +171,7 @@ where
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
+    /// let result = exa_con.execute("SELECT * FROM EXA_RUST_TEST LIMIT 1500;").unwrap();
     ///
     /// if let QueryResult::ResultSet(result_set) = result {
     ///     // Change the expected row type with the turbofish notation
@@ -194,7 +194,7 @@ where
             total_rows_pos: self.total_rows_pos,
             chunk_rows_num: self.chunk_rows_num,
             chunk_rows_pos: self.chunk_rows_pos,
-            result_set_handle: self.result_set_handle,
+            result_set_handle: std::mem::take(&mut self.result_set_handle),
             columns: std::mem::take(&mut self.columns),
             data_iter: std::mem::replace(&mut self.data_iter, vec![].into_iter()),
             connection: Rc::clone(&self.connection),
