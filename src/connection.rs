@@ -207,10 +207,9 @@ impl Connection {
     /// prepared_stmt.execute(vec_data).unwrap();
     /// ```
     ///
-    /// String literals resembling a parameter can be escaped, if, for any reason, needed:
-    /// (Exasol doesn't really seem to like combining parameters with literals in prepared statements)
+    /// String literals resembling a parameter can be escaped, if needed:
     ///
-    /// ``` should_panic
+    /// ```
     /// # use exasol::{connect, QueryResult, PreparedStatement};
     /// # use exasol::error::Result;
     /// # use serde_json::json;

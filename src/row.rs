@@ -337,17 +337,19 @@ fn col_major_seq_data() {
     struct SomeRow(String, String);
 
     let row = SomeRow("val1".to_owned(), "val2".to_owned());
-    let row_major_data = vec![row.clone(), row.clone()];
+    let row_major_data = vec![row.clone(), row.clone(), row.clone()];
 
     let columns = &["col1", "col2"];
-    let col_major_data = to_col_major(columns, row_major_data).unwrap();
+    let (col_major_data, num_rows) = to_col_major(columns, row_major_data).unwrap();
     assert_eq!(
         col_major_data,
         vec![
-            vec!["val1".to_owned(), "val1".to_owned()],
-            vec!["val2".to_owned(), "val2".to_owned()]
+            vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()],
+            vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()]
         ]
-    )
+    );
+
+    assert_eq!(num_rows, 3);
 }
 
 #[test]
@@ -363,17 +365,19 @@ fn col_major_map_data() {
         col2: "val2".to_owned(),
     };
 
-    let row_major_data = vec![row.clone(), row.clone()];
+    let row_major_data = vec![row.clone(), row.clone(), row.clone()];
 
     let columns = &["col2", "col1"];
-    let col_major_data = to_col_major(columns, row_major_data).unwrap();
+    let (col_major_data, num_rows) = to_col_major(columns, row_major_data).unwrap();
     assert_eq!(
         col_major_data,
         vec![
-            vec!["val2".to_owned(), "val2".to_owned()],
-            vec!["val1".to_owned(), "val1".to_owned()]
+            vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()],
+            vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()]
         ]
-    )
+    );
+
+    assert_eq!(num_rows, 3);
 }
 
 /// Function used to transpose data from an iterator or serializable types,
@@ -383,18 +387,23 @@ fn col_major_map_data() {
 /// Sequence-like data is processed as such, and the columns are merely used to assert length.
 /// Map-like data though requires columns so the data is processed in the expected order. Also,
 /// duplicate columns are not supported, as column values from the map get consumed.
-pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> DataResult<Vec<Vec<Value>>>
+pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> DataResult<(Vec<Vec<Value>>, usize)>
 where
     S: Serialize,
     C: ?Sized + Hash + Ord + Display,
     String: Borrow<C>,
     T: IntoIterator<Item = S>,
 {
+    let mut num_rows = 0usize;
     let iter_data = data
         .into_iter()
-        .map(|s| to_seq_iter(s, columns).map(IntoIterator::into_iter))
+        .map(|s| {
+            num_rows += 1;
+            to_seq_iter(s, columns).map(IntoIterator::into_iter)
+        })
         .collect::<DataResult<Vec<IntoIter<Value>>>>()?;
-    Ok(ColumnMajorIterator(iter_data).collect::<Vec<Vec<Value>>>())
+    let col_major_data = ColumnMajorIterator(iter_data).collect::<Vec<Vec<Value>>>();
+    Ok((col_major_data, num_rows))
 }
 
 #[inline]

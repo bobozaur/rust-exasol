@@ -389,6 +389,7 @@ impl PreparedStatement {
     ///         ["a", "b", 1, "x"],
     ///         ["c", "d", 2, "x"],
     ///         ["e", "f", 3, "x"],
+    ///         ["g", "h", 4, "x"]
     ///     ]
     /// );
     ///
@@ -422,13 +423,14 @@ impl PreparedStatement {
             .map(|c| c.as_str())
             .collect::<Vec<&str>>();
 
-        let col_major_data = to_col_major(&col_names, data).map_err(DriverError::DataError)?;
+        let (col_major_data, num_rows) =
+            to_col_major(&col_names, data).map_err(DriverError::DataError)?;
 
         let payload = json!({
             "command": "executePreparedStatement",
             "statementHandle": &self.statement_handle,
             "numColumns": num_columns,
-            "numRows": col_major_data.len(),
+            "numRows": num_rows,
             "columns": columns,
             "data": col_major_data
         });
