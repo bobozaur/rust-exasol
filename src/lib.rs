@@ -66,6 +66,7 @@
 //!
 //! ResultSet::try_from(result)
 //!     .unwrap()
+//!     .by_ref()
 //!     .take(500)
 //!     .collect::<Result<Vec<Vec<Value>>>>()
 //!     .unwrap()

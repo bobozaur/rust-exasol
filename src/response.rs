@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use crate::con_opts::ProtocolVersion;
 use crate::error::{DriverError, RequestError, Result};
-use serde::de::{DeserializeSeed, Error, SeqAccess, Visitor};
+use serde::de::{DeserializeSeed, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
@@ -220,7 +220,7 @@ pub(crate) struct FetchedData {
     #[serde(rename = "numRows")]
     pub(crate) chunk_rows_num: usize,
     #[serde(default, deserialize_with = "to_row_major")]
-    pub(crate) data: Vec<Vec<Value>>,
+    pub(crate) data: Vec<Value>,
 }
 
 #[test]
@@ -463,7 +463,7 @@ pub(crate) struct ResultSetDe {
     pub(crate) result_set_handle: Option<u16>,
     pub(crate) columns: Vec<Column>,
     #[serde(default, deserialize_with = "to_row_major")]
-    pub(crate) data: Vec<Vec<Value>>,
+    pub(crate) data: Vec<Value>,
 }
 
 #[test]
@@ -538,37 +538,36 @@ impl Display for DataType {
 fn deser_to_row_major() {
     let json_data = json!([[1, 2, 3], [1, 2, 3]]);
     let row_major_data = to_row_major(json_data).unwrap();
-    assert_eq!(row_major_data, vec![vec![1, 1], vec![2, 2], vec![3, 3]]);
+    assert_eq!(row_major_data, vec![1, 2, 3, 1, 2, 3]);
 }
+
 /// Deserialization function used to turn Exasol's
-/// column major data into row major format during deserialization.
+/// column major data into a flattened Vec.
 ///
-/// Two different structs and visitors are used for transposing the data
-/// because the first column visitor will create a Vec for each row
-/// while the other column visitor will simply append values to each of these Vec instances
+/// A row can then be retrieved by getting an item at 0..number_of_columns * row_count.
 fn to_row_major<'de, D: Deserializer<'de>>(
     deserializer: D,
-) -> std::result::Result<Vec<Vec<Value>>, D::Error> {
-    struct FirstColumn<'a>(&'a mut Vec<Vec<Value>>);
+) -> std::result::Result<Vec<Value>, D::Error> {
+        struct Column<'a>(&'a mut Vec<Value>);
 
-    impl<'de, 'a> DeserializeSeed<'de> for FirstColumn<'a> {
+    impl<'de, 'a> DeserializeSeed<'de> for Column<'a> {
         type Value = ();
 
         fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
         where
             D: Deserializer<'de>,
         {
-            deserializer.deserialize_seq(FirstColumnVisitor(self.0))
+            deserializer.deserialize_seq(ColumnVisitor(self.0))
         }
     }
 
-    struct FirstColumnVisitor<'a>(&'a mut Vec<Vec<Value>>);
+    struct ColumnVisitor<'a>(&'a mut Vec<Value>);
 
-    impl<'de, 'a> Visitor<'de> for FirstColumnVisitor<'a> {
+    impl<'de, 'a> Visitor<'de> for ColumnVisitor<'a> {
         type Value = ();
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            write!(formatter, "An array of JSON values")
+            write!(formatter, "An array")
         }
 
         fn visit_seq<A>(self, mut seq: A) -> std::result::Result<(), A::Error>
@@ -576,54 +575,16 @@ fn to_row_major<'de, D: Deserializer<'de>>(
             A: SeqAccess<'de>,
         {
             while let Some(elem) = seq.next_element()? {
-                self.0.push(vec![elem])
+                self.0.push(elem)
             }
             Ok(())
         }
     }
 
-    struct OtherColumn<'a>(&'a mut Vec<Vec<Value>>);
+    struct DataVisitor;
 
-    impl<'de, 'a> DeserializeSeed<'de> for OtherColumn<'a> {
-        type Value = ();
-
-        fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserializer.deserialize_seq(OtherColumnVisitor(self.0))
-        }
-    }
-
-    struct OtherColumnVisitor<'a>(&'a mut Vec<Vec<Value>>);
-
-    impl<'de, 'a> Visitor<'de> for OtherColumnVisitor<'a> {
-        type Value = ();
-
-        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-            write!(formatter, "An array of JSON values")
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<(), A::Error>
-        where
-            A: SeqAccess<'de>,
-        {
-            let mut i = 0;
-            while let Some(elem) = seq.next_element()? {
-                self.0
-                    .get_mut(i)
-                    .ok_or_else(|| A::Error::custom("Unequal columns and rows"))?
-                    .push(elem);
-                i += 1;
-            }
-            Ok(())
-        }
-    }
-
-    struct OuterVecVisitor;
-
-    impl<'de> Visitor<'de> for OuterVecVisitor {
-        type Value = Vec<Vec<serde_json::Value>>;
+    impl<'de> Visitor<'de> for DataVisitor {
+        type Value = Vec<serde_json::Value>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
             write!(formatter, "An array of arrays")
@@ -634,17 +595,14 @@ fn to_row_major<'de, D: Deserializer<'de>>(
             A: SeqAccess<'de>,
         {
             let mut transposed = Vec::new();
-            // Do first iteration to create and push inner Vecs into the one declared above.
-            seq.next_element_seed(FirstColumn(&mut transposed))?;
-            // Then keep appending to these vectors
-            // already created in outer vec while there's data
+
             while seq
-                .next_element_seed(OtherColumn(&mut transposed))?
+                .next_element_seed(Column(&mut transposed))?
                 .is_some()
             {}
             Ok(transposed)
         }
     }
 
-    deserializer.deserialize_seq(OuterVecVisitor)
+    deserializer.deserialize_seq(DataVisitor)
 }

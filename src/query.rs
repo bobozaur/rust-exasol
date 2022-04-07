@@ -10,7 +10,6 @@ use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::rc::Rc;
-use std::vec::IntoIter;
 
 /// Enum containing the result of a query
 /// `ResultSet` variant holds a [ResultSet]
@@ -109,7 +108,7 @@ pub struct ResultSet<T: DeserializeOwned = Vec<Value>> {
     chunk_rows_pos: usize,
     result_set_handle: Option<u16>,
     columns: Vec<Column>,
-    data_iter: IntoIter<Vec<Value>>,
+    flat_data: Vec<Value>,
     connection: Rc<RefCell<ConnectionImpl>>,
     is_closed: bool,
     row_type: PhantomData<*const T>,
@@ -196,7 +195,7 @@ where
             chunk_rows_pos: self.chunk_rows_pos,
             result_set_handle: std::mem::take(&mut self.result_set_handle),
             columns: std::mem::take(&mut self.columns),
-            data_iter: std::mem::replace(&mut self.data_iter, vec![].into_iter()),
+            flat_data: std::mem::replace(&mut self.flat_data, Vec::new()),
             connection: Rc::clone(&self.connection),
             is_closed: self.is_closed,
             row_type: PhantomData,
@@ -227,26 +226,40 @@ where
             chunk_rows_pos: 0,
             result_set_handle: rs.result_set_handle,
             columns: rs.columns,
-            data_iter: rs.data.into_iter(),
+            flat_data: rs.data,
             connection: Rc::clone(con_rc),
             is_closed: false,
             row_type: PhantomData,
         }
     }
 
-    #[inline]
-    fn next_row(&mut self) -> Option<Result<T>> {
-        self.data_iter.next().map(|r| {
-            Ok(T::deserialize(Row::new(r, &self.columns))
+    fn next_row(&mut self) -> Result<T> {
+        let col_len = self.columns.len();
+
+        // Get a row by indexing through the 0..col_len range
+        // Then the index will be chunk_rows_pos + i * chunk_rows_num
+        let mut row = Vec::with_capacity(col_len);
+        (0..col_len)
+            .into_iter()
+            .map(|i| self.chunk_rows_pos + i * self.chunk_rows_num)
+            .map(|i| self.flat_data.get_mut(i).map(|v| v.take()))
+            .for_each(|o| row.extend(o));
+
+        let row_len = row.len();
+
+        // Ensure there was data for all columns
+        match row_len == col_len {
+            true => Ok(T::deserialize(Row::new(row, &self.columns))
                 .map_err(DataError::TypeParseError)
-                .map_err(DriverError::DataError)?)
-        })
+                .map_err(DriverError::DataError)?),
+            false => Err(DataError::InsufficientData(col_len, row_len))
+                .map_err(DriverError::DataError)?,
+        }
     }
 
     /// Closes the result set if it wasn't already closed
     /// This method gets called when a [ResultSet] is fully iterated over
     /// but also when the [ResultSet] is dropped.
-    #[inline]
     fn close(&mut self) -> Result<()> {
         self.result_set_handle.map_or(Ok(()), |h| {
             if !self.is_closed {
@@ -280,7 +293,7 @@ where
                 con.get_resp_data(payload)?.try_to_fetched_data().map(|f| {
                     self.chunk_rows_num = f.chunk_rows_num;
                     self.chunk_rows_pos = 0;
-                    self.data_iter = f.data.into_iter();
+                    self.flat_data = f.data;
                 })
             })
     }
@@ -294,19 +307,17 @@ where
     type Item = Result<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let row = self.next_row().or_else(|| {
+        let row = if self.chunk_rows_pos < self.chunk_rows_num {
+            // There still are rows in this chunk
+            Some(self.next_row())
+        } else if self.total_rows_pos >= self.total_rows_num {
             // All rows retrieved
-            if self.total_rows_pos >= self.total_rows_num {
-                None
-                // Whole chunk retrieved. Get new one.
-            } else if self.chunk_rows_pos >= self.chunk_rows_num {
-                self.fetch_chunk()
-                    .map_or_else(|e| Some(Err(e)), |_| self.next_row())
-                // If all else fails
-            } else {
-                None
-            }
-        });
+            None
+        } else {
+            // Whole chunk retrieved. Get new one and get row.
+            self.fetch_chunk()
+                .map_or_else(|e| Some(Err(e)), |_| Some(self.next_row()))
+        };
 
         // Updating positional counters
         self.total_rows_pos += 1;
@@ -423,8 +434,8 @@ impl PreparedStatement {
             .map(|c| c.as_str())
             .collect::<Vec<&str>>();
 
-        let (col_major_data, num_rows) =
-            to_col_major(&col_names, data).map_err(DriverError::DataError)?;
+        let col_major_data = to_col_major(&col_names, data).map_err(DriverError::DataError)?;
+        let num_rows = col_major_data.get_num_rows();
 
         let payload = json!({
             "command": "executePreparedStatement",

@@ -2,12 +2,12 @@ use crate::error::DataError;
 use crate::response::Column;
 use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, Visitor};
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
-use serde_json::{Error, Map, Value};
+use serde_json::{Error, Value};
 use std::borrow::{Borrow, Cow};
+use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::vec::IntoIter;
 
 // Convenience alias
 type DataResult<T> = std::result::Result<T, DataError>;
@@ -333,6 +333,8 @@ impl<'de> serde::de::Deserializer<'de> for BorrowedCowStrDeserializer<'de> {
 
 #[test]
 fn col_major_seq_data() {
+    use serde_json::json;
+
     #[derive(Clone, Serialize)]
     struct SomeRow(String, String);
 
@@ -340,20 +342,21 @@ fn col_major_seq_data() {
     let row_major_data = vec![row.clone(), row.clone(), row.clone()];
 
     let columns = &["col1", "col2"];
-    let (col_major_data, num_rows) = to_col_major(columns, row_major_data).unwrap();
+    let col_major_data = to_col_major(columns, row_major_data).unwrap();
+
     assert_eq!(
-        col_major_data,
-        vec![
+        json!(col_major_data),
+        json!(vec![
             vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()],
             vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()]
-        ]
+        ])
     );
-
-    assert_eq!(num_rows, 3);
 }
 
 #[test]
 fn col_major_map_data() {
+    use serde_json::json;
+
     #[derive(Clone, Serialize)]
     struct SomeRow {
         col1: String,
@@ -368,16 +371,15 @@ fn col_major_map_data() {
     let row_major_data = vec![row.clone(), row.clone(), row.clone()];
 
     let columns = &["col2", "col1"];
-    let (col_major_data, num_rows) = to_col_major(columns, row_major_data).unwrap();
+    let col_major_data = to_col_major(columns, row_major_data).unwrap();
+
     assert_eq!(
-        col_major_data,
-        vec![
+        json!(col_major_data),
+        json!(vec![
             vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()],
             vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()]
-        ]
+        ])
     );
-
-    assert_eq!(num_rows, 3);
 }
 
 /// Function used to transpose data from an iterator or serializable types,
@@ -387,71 +389,121 @@ fn col_major_map_data() {
 /// Sequence-like data is processed as such, and the columns are merely used to assert length.
 /// Map-like data though requires columns so the data is processed in the expected order. Also,
 /// duplicate columns are not supported, as column values from the map get consumed.
-pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> DataResult<(Vec<Vec<Value>>, usize)>
+pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> DataResult<ColumnIteratorAdapter>
 where
     S: Serialize,
     C: ?Sized + Hash + Ord + Display,
     String: Borrow<C>,
     T: IntoIterator<Item = S>,
 {
+    let num_columns = columns.len();
     let mut num_rows = 0usize;
-    let iter_data = data
-        .into_iter()
-        .map(|s| {
-            num_rows += 1;
-            to_seq_iter(s, columns).map(IntoIterator::into_iter)
-        })
-        .collect::<DataResult<Vec<IntoIter<Value>>>>()?;
-    let col_major_data = ColumnMajorIterator(iter_data).collect::<Vec<Vec<Value>>>();
-    Ok((col_major_data, num_rows))
+    let mut flat_data = Vec::new();
+    let mut result = Ok(());
+
+    for item in data {
+        num_rows += 1;
+        let val = serde_json::to_value(item)?;
+
+        match val {
+            Value::Object(mut o) => {
+                flat_data.extend(columns.iter().map(|c| match o.remove(c) {
+                    Some(v) => v,
+                    None => {
+                        result = Err(DataError::MissingColumn(c.to_string()));
+                        Value::Null
+                    }
+                }));
+
+                if result.is_err() {
+                    break;
+                }
+            }
+            Value::Array(a) => {
+                let arr_len = a.len();
+                let iter = match num_columns > arr_len {
+                    true => {
+                        result = Err(DataError::InsufficientData(num_columns, arr_len));
+                        break;
+                    }
+                    false => a.into_iter().take(num_columns),
+                };
+                flat_data.extend(iter)
+            }
+            _ => {
+                result = Err(DataError::InvalidIterType);
+                break;
+            }
+        }
+    }
+
+    let iter = ColumnMajorIterator::new(flat_data, num_rows, num_columns);
+    result.and(Ok(ColumnIteratorAdapter::new(iter)))
 }
 
-#[inline]
-fn to_seq_iter<C, S>(data: S, columns: &[&C]) -> DataResult<Vec<Value>>
-where
-    S: Serialize,
-    C: ?Sized + Hash + Ord + Display,
-    String: Borrow<C>,
-{
-    let val = serde_json::to_value(data)?;
+struct ColumnMajorIterator {
+    flat_data: Vec<Value>,
+    num_rows: usize,
+    num_columns: usize,
+    col_pos: usize,
+}
 
-    match val {
-        Value::Object(mut o) => columns.iter().map(|c| take_map_value(&mut o, c)).collect(),
-        Value::Array(a) => take_arr_values(a, columns.len()),
-        _ => Err(DataError::InvalidIterType),
+impl ColumnMajorIterator {
+    fn new(flat_data: Vec<Value>, num_rows: usize, num_columns: usize) -> Self {
+        Self {
+            flat_data,
+            num_rows,
+            num_columns,
+            col_pos: 0,
+        }
     }
 }
-
-#[inline]
-fn take_map_value<C>(map: &mut Map<String, Value>, col: &C) -> DataResult<Value>
-where
-    C: ?Sized + Hash + Ord + Display,
-    String: Borrow<C>,
-{
-    map.remove(col)
-        .ok_or_else(|| DataError::MissingColumn(col.to_string()))
-}
-
-#[inline]
-fn take_arr_values(arr: Vec<Value>, len: usize) -> DataResult<Vec<Value>> {
-    let arr_len = arr.len();
-    match len > arr_len {
-        true => Err(DataError::InsufficientData(len, arr_len)),
-        false => Ok(arr.into_iter().take(len).collect()),
-    }
-}
-
-struct ColumnMajorIterator(Vec<IntoIter<Value>>);
 
 impl Iterator for ColumnMajorIterator {
     type Item = Vec<Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0
-            .iter_mut()
-            .map(|iter| iter.next())
-            .collect::<Option<Vec<Value>>>()
-            .and_then(|r| if r.is_empty() { None } else { Some(r) })
+        // Stop iteration if a Vec for each column has already been returned
+        if self.col_pos >= self.num_columns {
+            return None
+        }
+
+        // Get a row by indexing through the 0..num_rows range
+        // Then the index will be col_pos + i * num_columns
+        let mut col = Vec::with_capacity(self.num_rows);
+
+        (0..self.num_rows)
+            .into_iter()
+            .map(|i| self.col_pos + i * self.num_columns)
+            .map(|i| self.flat_data.get_mut(i).map(|v| v.take()))
+            .for_each(|o| col.extend(o));
+
+        // Increment column position and return column
+        self.col_pos += 1;
+        Some(col)
+    }
+}
+
+/// Adapter to serialize the column iterator and avoid
+/// allocation of a container that just gets serialized away
+pub(crate) struct ColumnIteratorAdapter(RefCell<ColumnMajorIterator>);
+
+impl ColumnIteratorAdapter {
+    fn new(iter: ColumnMajorIterator) -> Self {
+        Self(RefCell::new(iter))
+    }
+
+    pub(crate) fn get_num_rows(&self) -> usize {
+        self.0.borrow_mut().num_rows
+    }
+}
+
+impl serde::Serialize for ColumnIteratorAdapter {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_seq(self.0.borrow_mut().by_ref())
     }
 }
 
