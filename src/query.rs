@@ -195,7 +195,7 @@ where
             chunk_rows_pos: self.chunk_rows_pos,
             result_set_handle: std::mem::take(&mut self.result_set_handle),
             columns: std::mem::take(&mut self.columns),
-            flat_data: std::mem::replace(&mut self.flat_data, Vec::new()),
+            flat_data: std::mem::take(&mut self.flat_data),
             connection: Rc::clone(&self.connection),
             is_closed: self.is_closed,
             row_type: PhantomData,
@@ -252,8 +252,9 @@ where
             true => Ok(T::deserialize(Row::new(row, &self.columns))
                 .map_err(DataError::TypeParseError)
                 .map_err(DriverError::DataError)?),
-            false => Err(DataError::InsufficientData(col_len, row_len))
-                .map_err(DriverError::DataError)?,
+            false => {
+                Err(DataError::IncorrectLength(col_len, row_len)).map_err(DriverError::DataError)?
+            }
         }
     }
 
@@ -362,21 +363,19 @@ impl PreparedStatement {
     }
 
     /// Executes the prepared statement with the given data.
-    /// Data must implement [IntoIterator] and [Serialize].
+    /// Data must implement [IntoIterator] where `Item` implements [Serialize].
     /// Each `Item` of the iterator will represent a data row.
     ///
-    /// If `Item` is map-like, columns are uniquely re-ordered based on
-    /// the expected order given through the named parameters.
+    /// If `Item` is map-like, only the needed columns are retrieved,
+    /// getting reordered based on the expected order given through the named parameters.
     ///
-    /// If `Item` is sequence-like, the needed amount of columns is
-    /// taken from the data. Parameter names are ignored.
-    ///
-    /// Excess data is discarded.
+    /// If `Item` is sequence-like, the data is used as-is.
+    /// Parameter names are ignored.
     ///
     /// # Errors
     ///
     /// Missing parameter names in map-like types (which can also be caused by duplication)
-    /// or insufficient columns in sequence-like types results in errors.
+    /// or too few/many columns in sequence-like types results in errors.
     ///
     /// ```
     /// # use exasol::{connect, QueryResult};
@@ -397,10 +396,10 @@ impl PreparedStatement {
     ///
     /// let json_data = json!(
     ///     [
-    ///         ["a", "b", 1, "x"],
-    ///         ["c", "d", 2, "x"],
-    ///         ["e", "f", 3, "x"],
-    ///         ["g", "h", 4, "x"]
+    ///         ["a", "b", 1],
+    ///         ["c", "d", 2],
+    ///         ["e", "f", 3],
+    ///         ["g", "h", 4]
     ///     ]
     /// );
     ///

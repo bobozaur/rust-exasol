@@ -153,12 +153,9 @@ impl Connection {
     /// Creates a prepared statement of type [PreparedStatement].
     /// The prepared statement can then be executed with the provided data.
     ///
-    /// Unique named parameters are supported to aid in using map-like types as data rows
+    /// Named parameters are supported to aid in using map-like types as data rows
     /// when executing the prepared statement. Using just `?` results in the parameter name
     /// being the empty string.
-    ///
-    /// The names must be unique as the associated values get consumed, therefore a duplicate
-    /// name won't result in a value on look-up.
     ///
     /// For sequence-like types, parameter names are ignored and discarded.
     ///

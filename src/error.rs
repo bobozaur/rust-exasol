@@ -69,7 +69,7 @@ pub enum DataError {
     #[error("Missing data for column {0}")]
     MissingColumn(String),
     #[error("Expecting {0} data columns in array, found {1}")]
-    InsufficientData(usize, usize),
+    IncorrectLength(usize, usize),
     #[error("Data iterator items must deserialize to sequences or maps")]
     InvalidIterType,
     #[error(transparent)]

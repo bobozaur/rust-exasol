@@ -37,9 +37,13 @@ mod tests {
         let password = env::var("EXA_PASSWORD").unwrap();
 
         let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-        let result = exa_con.execute("SELECT * FROM EXA_RUST_TEST LIMIT 2001;").unwrap();
+        let result = exa_con
+            .execute("SELECT * FROM EXA_RUST_TEST LIMIT 2001;")
+            .unwrap();
 
-        let result_set = ResultSet::try_from(result).unwrap().with_row_type::<Vec<Value>>();
+        let result_set = ResultSet::try_from(result)
+            .unwrap()
+            .with_row_type::<Vec<Value>>();
         let result_set = result_set;
         for row in result_set {
             println!("{:?}", row.unwrap());

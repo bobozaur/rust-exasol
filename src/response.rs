@@ -548,7 +548,7 @@ fn deser_to_row_major() {
 fn to_row_major<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> std::result::Result<Vec<Value>, D::Error> {
-        struct Column<'a>(&'a mut Vec<Value>);
+    struct Column<'a>(&'a mut Vec<Value>);
 
     impl<'de, 'a> DeserializeSeed<'de> for Column<'a> {
         type Value = ();
@@ -596,10 +596,7 @@ fn to_row_major<'de, D: Deserializer<'de>>(
         {
             let mut transposed = Vec::new();
 
-            while seq
-                .next_element_seed(Column(&mut transposed))?
-                .is_some()
-            {}
+            while seq.next_element_seed(Column(&mut transposed))?.is_some() {}
             Ok(transposed)
         }
     }

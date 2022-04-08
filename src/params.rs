@@ -144,7 +144,7 @@ fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
             .unwrap_or(&query[cap.get(0).unwrap().range()])
     });
 
-    result.and(Ok(q.into_owned()))
+    result.map(|_| q.into_owned())
 }
 
 /// Generates a `HashMap<String, String>` of the params SQL representation,
