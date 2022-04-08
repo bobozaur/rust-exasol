@@ -5,7 +5,6 @@ use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
 use serde_json::{Error, Map, Value};
 use std::borrow::{Borrow, Cow};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -371,7 +370,7 @@ fn col_major_map_data() {
 
     let row_major_data = vec![row.clone(), row.clone(), row.clone()];
 
-    let columns = &["col2", "col1", "col1"];
+    let columns = &["col2", "col1"];
     let col_major_data = to_col_major(columns, row_major_data).unwrap();
 
     assert_eq!(
@@ -379,7 +378,6 @@ fn col_major_map_data() {
         json!(vec![
             vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()],
             vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()],
-            vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()]
         ])
     );
 }
@@ -417,23 +415,6 @@ where
     Ok(ColumnIteratorAdapter::new(iter))
 }
 
-/// Retrieved the value associated to a column from the map.
-/// If the value was already retrieved, it's flat_data Vec index is stored in the cache,
-/// therefore duplicates will be cloned from there.
-fn get_map_value<C>(
-    flat_data: &mut Vec<Value>,
-    map: &mut Map<String, Value>,
-    cache: &HashMap<&&C, usize>,
-    col: &&C,
-) -> Option<Value>
-where
-    C: ?Sized + Hash + Ord + Display,
-    String: Borrow<C>,
-{
-    map.remove(col)
-        .or_else(|| cache.get(col).and_then(|i| flat_data.get(*i).cloned()))
-}
-
 /// Extends the flat_data buffer with another row
 /// Errors out if a column name is not found in the map
 fn extend_by_map<C>(
@@ -445,14 +426,10 @@ where
     C: ?Sized + Hash + Ord + Display,
     String: Borrow<C>,
 {
-    // Will be used for providing on-demand clone functionalities for duplicate column names
-    let mut cache = HashMap::new();
-
     columns.iter().try_for_each(
-        |col| match get_map_value(flat_data, &mut map, &cache, col) {
+        |col| match map.remove(col) {
             None => Err(DataError::MissingColumn(col.to_string())),
             Some(v) => {
-                cache.insert(col, flat_data.len());
                 flat_data.push(v);
                 Ok(())
             }

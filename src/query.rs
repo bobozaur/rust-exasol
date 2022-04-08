@@ -366,7 +366,7 @@ impl PreparedStatement {
     /// Data must implement [IntoIterator] where `Item` implements [Serialize].
     /// Each `Item` of the iterator will represent a data row.
     ///
-    /// If `Item` is map-like, only the needed columns are retrieved,
+    /// If `Item` is map-like, the needed columns are retrieved and consumed,
     /// getting reordered based on the expected order given through the named parameters.
     ///
     /// If `Item` is sequence-like, the data is used as-is.

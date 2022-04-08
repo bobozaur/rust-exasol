@@ -157,6 +157,9 @@ impl Connection {
     /// when executing the prepared statement. Using just `?` results in the parameter name
     /// being the empty string.
     ///
+    /// Since a map-like type implies no duplicate keys, duplicate named parameters
+    /// are not supported and will result in errors when the [PreparedStatement] is executed.
+    ///
     /// For sequence-like types, parameter names are ignored and discarded.
     ///
     /// ```
