@@ -121,7 +121,7 @@ fn parametrize_query(query: &str, val: Value) -> BindResult {
 #[inline]
 fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
     let re = regex!(r"\\(:\w+)|[:\w]:\w+|:\w+:|:(\w+)");
-    let mut result = Ok(String::new()); // Will store errors here
+    let mut result = Ok(()); // Will store errors here
 
     // Capture group 1 is Some only when an escaped parameter construct
     // is matched. Returning the group gets rid of the escape backslash.

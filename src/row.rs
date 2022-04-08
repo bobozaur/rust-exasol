@@ -2,12 +2,15 @@ use crate::error::DataError;
 use crate::response::Column;
 use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, Visitor};
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
-use serde_json::{Error, Value};
+use serde_json::{Error, Map, Value};
 use std::borrow::{Borrow, Cow};
 use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
+use std::iter::{Scan, Take};
 use std::marker::PhantomData;
+use std::slice::Iter;
+use std::vec::IntoIter;
 
 // Convenience alias
 type DataResult<T> = std::result::Result<T, DataError>;
@@ -399,46 +402,51 @@ where
     let num_columns = columns.len();
     let mut num_rows = 0usize;
     let mut flat_data = Vec::new();
-    let mut result = Ok(());
 
     for item in data {
         num_rows += 1;
         let val = serde_json::to_value(item)?;
 
         match val {
-            Value::Object(mut o) => {
-                flat_data.extend(columns.iter().map(|c| match o.remove(c) {
-                    Some(v) => v,
-                    None => {
-                        result = Err(DataError::MissingColumn(c.to_string()));
-                        Value::Null
-                    }
-                }));
-
-                if result.is_err() {
-                    break;
-                }
-            }
-            Value::Array(a) => {
-                let arr_len = a.len();
-                let iter = match num_columns > arr_len {
-                    true => {
-                        result = Err(DataError::InsufficientData(num_columns, arr_len));
-                        break;
-                    }
-                    false => a.into_iter().take(num_columns),
-                };
-                flat_data.extend(iter)
-            }
-            _ => {
-                result = Err(DataError::InvalidIterType);
-                break;
-            }
+            Value::Object(mut map) => extend_by_map(&mut flat_data, map, columns)?,
+            Value::Array(arr) => extend_by_arr(&mut flat_data, arr, num_columns)?,
+            _ => Err(DataError::InvalidIterType)?,
         }
     }
 
     let iter = ColumnMajorIterator::new(flat_data, num_rows, num_columns);
-    result.and(Ok(ColumnIteratorAdapter::new(iter)))
+    Ok(ColumnIteratorAdapter::new(iter))
+}
+
+/// Extends the flat_data buffer with another row
+/// Errors out if a column name is not found in the map
+fn extend_by_map<C>(
+    flat_data: &mut Vec<Value>,
+    mut map: Map<String, Value>,
+    columns: &[&C],
+) -> DataResult<()>
+where
+    C: ?Sized + Hash + Ord + Display,
+    String: Borrow<C>,
+{
+    columns.iter().try_for_each(|col| match map.remove(col) {
+        Some(v) => Ok(flat_data.push(v)),
+        None => Err(DataError::MissingColumn(col.to_string())),
+    })
+}
+
+/// Extends the flat_data buffer with another row
+/// Errors out if the row is not of the expected size
+fn extend_by_arr(
+    flat_data: &mut Vec<Value>,
+    arr: Vec<Value>,
+    num_columns: usize,
+) -> DataResult<()> {
+    let arr_len = arr.len();
+    match num_columns == arr_len {
+        true => Ok(flat_data.extend(arr)),
+        false => Err(DataError::InsufficientData(num_columns, arr_len)),
+    }
 }
 
 struct ColumnMajorIterator {
@@ -465,7 +473,7 @@ impl Iterator for ColumnMajorIterator {
     fn next(&mut self) -> Option<Self::Item> {
         // Stop iteration if a Vec for each column has already been returned
         if self.col_pos >= self.num_columns {
-            return None
+            return None;
         }
 
         // Get a row by indexing through the 0..num_rows range
