@@ -174,16 +174,16 @@ where
     ///
     /// if let QueryResult::ResultSet(result_set) = result {
     ///     // Change the expected row type with the turbofish notation
-    ///     let mut result_set = result_set.with_row_type::<(String, String)>();
+    ///     let mut result_set = result_set.deserialize::<(String, String)>();
     ///     let row1 = result_set.next();
     ///
     ///     // Nothing stops you from changing row types
     ///     // on the same result set, even while iterating through it
-    ///     let mut result_set = result_set.with_row_type::<Vec<String>>();
+    ///     let mut result_set = result_set.deserialize::<Vec<String>>();
     ///     let row2 = result_set.next();
     /// }
     /// ```
-    pub fn with_row_type<R>(mut self) -> ResultSet<R>
+    pub fn deserialize<R>(mut self) -> ResultSet<R>
     where
         R: DeserializeOwned,
     {

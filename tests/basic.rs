@@ -43,7 +43,7 @@ mod tests {
 
         let result_set = ResultSet::try_from(result)
             .unwrap()
-            .with_row_type();
+            .deserialize();
         for row in result_set {
             let record: (String, String, u16) = row.unwrap();
             println!("{:?}", row.unwrap());
@@ -64,7 +64,7 @@ mod tests {
         }
 
         if let QueryResult::ResultSet(r) = result {
-            for row in r.with_row_type::<Test>() {
+            for row in r.deserialize::<Test>() {
                 let x = row.unwrap();
                 println!("{:?}", x);
             }

@@ -586,19 +586,19 @@ impl serde::Serialize for ColumnIteratorAdapter {
 ///  }
 ///
 /// if let QueryResult::ResultSet(r) = result1 {
-///     let result1 = r.with_row_type::<Val1>();
+///     let result1 = r.deserialize::<Val1>();
 ///     // Due to the unsupported external tagging
 ///     // deserialization this will error out:
 ///     // let rows1 = result1.collect::<Result<Vec<Val1>>>().unwrap();
 /// }
 /// if let QueryResult::ResultSet(r) = result2 {
-///     let result2 = r.with_row_type::<SomeRow2>();
+///     let result2 = r.deserialize::<SomeRow2>();
 ///     // But internal tagging works
 ///     let rows2 = result2.collect::<Result<Vec<SomeRow2>>>().unwrap();
 /// }
 ///
 /// if let QueryResult::ResultSet(r) = result3 {
-///     let result3 = r.with_row_type::<SomeRow3>();
+///     let result3 = r.deserialize::<SomeRow3>();
 ///     // And so does untagged deserialization
 ///     let rows3 = result3.collect::<Result<Vec<SomeRow3>>>().unwrap();
 ///  }

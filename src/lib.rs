@@ -111,12 +111,12 @@
 //! let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
 //!
 //! // Change the expected row type with the turbofish notation
-//! let mut result_set = ResultSet::try_from(result).unwrap().with_row_type::<(String, String)>();
+//! let mut result_set = ResultSet::try_from(result).unwrap().deserialize::<(String, String)>();
 //! let row1 = result_set.next();
 //!
 //! // Nothing stops you from changing row types
 //! // on the same result set, even while iterating through it
-//! let mut result_set = result_set.with_row_type::<Vec<String>>();
+//! let mut result_set = result_set.deserialize::<Vec<String>>();
 //! let row2 = result_set.next();
 //!
 //! let result = exa_con.execute("SELECT 1 as col1, 2 as col2, 3 as col3 \
@@ -130,8 +130,8 @@
 //!     col3: u8,
 //! }
 //!
-//! let result_set = ResultSet::try_from(result).unwrap().with_row_type::<Test>();
-//! for row in result_set.with_row_type::<Test>() {
+//! let result_set = ResultSet::try_from(result).unwrap().deserialize::<Test>();
+//! for row in result_set.deserialize::<Test>() {
 //!     let ok_row = row.unwrap();
 //!     // do stuff with row
 //! }
