@@ -43,9 +43,9 @@ mod tests {
 
         let result_set = ResultSet::try_from(result)
             .unwrap()
-            .with_row_type::<Vec<Value>>();
-        let result_set = result_set;
+            .with_row_type();
         for row in result_set {
+            let record: (String, String, u16) = row.unwrap();
             println!("{:?}", row.unwrap());
         }
 

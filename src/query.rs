@@ -434,7 +434,7 @@ impl PreparedStatement {
             .collect::<Vec<&str>>();
 
         let col_major_data = to_col_major(&col_names, data).map_err(DriverError::DataError)?;
-        let num_rows = col_major_data.get_num_rows();
+        let num_rows = col_major_data.num_rows();
 
         let payload = json!({
             "command": "executePreparedStatement",
@@ -447,7 +447,7 @@ impl PreparedStatement {
 
         self.connection
             .borrow_mut()
-            .exec_and_get_first(&self.connection, payload)
+            .exec_with_one_result(&self.connection, payload)
     }
 
     #[inline]

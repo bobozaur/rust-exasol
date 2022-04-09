@@ -197,7 +197,7 @@ impl ConOpts {
 
     /// DSN (defaults to `None`)
     #[inline]
-    pub fn get_dsn(&self) -> Option<&str> {
+    pub fn dsn(&self) -> Option<&str> {
         self.0.dsn.as_deref()
     }
 
@@ -211,7 +211,7 @@ impl ConOpts {
 
     /// Port (defaults to `8563`).
     #[inline]
-    pub fn get_port(&self) -> u16 {
+    pub fn port(&self) -> u16 {
         self.0.port
     }
 
@@ -222,7 +222,7 @@ impl ConOpts {
 
     /// Schema (defaults to `None`).
     #[inline]
-    pub fn get_schema(&self) -> Option<&str> {
+    pub fn schema(&self) -> Option<&str> {
         self.0.schema.as_deref()
     }
 
@@ -236,7 +236,7 @@ impl ConOpts {
 
     /// User (defaults to `None`).
     #[inline]
-    pub fn get_user(&self) -> Option<&str> {
+    pub fn user(&self) -> Option<&str> {
         self.0.user.as_deref()
     }
 
@@ -250,7 +250,7 @@ impl ConOpts {
 
     /// Password (defaults to `None`).
     #[inline]
-    pub fn get_password(&self) -> Option<&str> {
+    pub fn password(&self) -> Option<&str> {
         self.0.password.as_deref()
     }
 
@@ -264,7 +264,7 @@ impl ConOpts {
 
     /// Protocol Version (defaults to `ProtocolVersion::V3`).
     #[inline]
-    pub fn get_protocol_version(&self) -> ProtocolVersion {
+    pub fn protocol_version(&self) -> ProtocolVersion {
         self.0.protocol_version
     }
 
@@ -275,7 +275,7 @@ impl ConOpts {
 
     /// Data fetch size in bytes (defaults to `5,242,880 = 5 * 1024 * 1024`).
     #[inline]
-    pub fn get_fetch_size(&self) -> u32 {
+    pub fn fetch_size(&self) -> u32 {
         self.0.fetch_size
     }
 
@@ -286,7 +286,7 @@ impl ConOpts {
 
     /// Query timeout (defaults to `0`, which means it's disabled).
     #[inline]
-    pub fn get_query_timeout(&self) -> u32 {
+    pub fn query_timeout(&self) -> u32 {
         self.0.query_timeout
     }
 
@@ -297,7 +297,7 @@ impl ConOpts {
 
     /// Encryption flag (defaults to `false`).
     #[inline]
-    pub fn get_encryption(&self) -> bool {
+    pub fn encryption(&self) -> bool {
         self.0.use_encryption
     }
 
@@ -315,7 +315,7 @@ impl ConOpts {
 
     /// Compression flag (defaults to `false`).
     #[inline]
-    pub fn get_compression(&self) -> bool {
+    pub fn compression(&self) -> bool {
         self.0.use_compression
     }
 
@@ -333,7 +333,7 @@ impl ConOpts {
 
     /// Lowercase column names flag (defaults to `true`)
     #[inline]
-    pub fn get_lowercase_columns(&self) -> bool {
+    pub fn lowercase_columns(&self) -> bool {
         self.0.lowercase_columns
     }
 
@@ -344,7 +344,7 @@ impl ConOpts {
 
     /// Autocommit flag (defaults to `true`).
     #[inline]
-    pub fn get_autocommit(&self) -> bool {
+    pub fn autocommit(&self) -> bool {
         self.0.autocommit
     }
 
@@ -356,8 +356,8 @@ impl ConOpts {
 
     /// Convenience method for determining the websocket type.
     #[inline]
-    pub(crate) fn get_ws_prefix(&self) -> &str {
-        match self.get_encryption() {
+    pub(crate) fn ws_prefix(&self) -> &str {
+        match self.encryption() {
             false => "ws",
             true => "wss",
         }
@@ -384,11 +384,11 @@ impl ConOpts {
             .and_then(|cap| {
                 // Parse capture groups from regex
                 let hostname_prefix = &cap[1];
-                let start_range = Self::get_dsn_part(&cap, 2);
-                let end_range = Self::get_dsn_part(&cap, 3);
-                let hostname_suffix = Self::get_dsn_part(&cap, 4);
-                let _fingerprint = Self::get_dsn_part(&cap, 5);
-                let port = Self::get_dsn_part(&cap, 6)
+                let start_range = Self::parse_dsn_part(&cap, 2);
+                let end_range = Self::parse_dsn_part(&cap, 3);
+                let hostname_suffix = Self::parse_dsn_part(&cap, 4);
+                let _fingerprint = Self::parse_dsn_part(&cap, 5);
+                let port = Self::parse_dsn_part(&cap, 6)
                     .parse::<u16>()
                     .unwrap_or(self.0.port);
 
@@ -457,7 +457,7 @@ impl ConOpts {
 
     /// Used for retrieving an optional DSN part, or an empty string if missing
     #[inline]
-    fn get_dsn_part<'a>(cap: &'a Captures, index: usize) -> &'a str {
+    fn parse_dsn_part<'a>(cap: &'a Captures, index: usize) -> &'a str {
         cap.get(index).map_or("", |s| s.as_str())
     }
 

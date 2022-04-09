@@ -22,10 +22,11 @@ use crate::response::{Attributes, Response, ResponseData};
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 #[cfg(feature = "flate2")]
 use std::io::Write;
+use std::ops::ControlFlow;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
-type ConResult = std::result::Result<WebSocket<MaybeTlsStream<TcpStream>>, ConnectionError>;
+type WsAddr = (WebSocket<MaybeTlsStream<TcpStream>>, String);
 
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
@@ -417,12 +418,14 @@ impl ConnectionImpl {
     /// If all options were exhausted and a connection could not be established
     /// an error is returned.
     pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
-        let ws = Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
+        let (ws, addr) =
+            Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
         let exa_attr = HashMap::new();
 
         let driver_attr = DriverAttributes {
-            fetch_size: opts.get_fetch_size(),
-            lowercase_columns: opts.get_lowercase_columns(),
+            server_addr: addr,
+            fetch_size: opts.fetch_size(),
+            lowercase_columns: opts.lowercase_columns(),
         };
 
         let mut con = Self {
@@ -458,7 +461,7 @@ impl ConnectionImpl {
         T: AsRef<str> + Serialize,
     {
         let payload = json!({"command": "execute", "sqlText": query});
-        self.exec_and_get_first(con_impl, payload)
+        self.exec_with_one_result(con_impl, payload)
     }
 
     /// Sends the payload to Exasol to execute multiple queries
@@ -476,7 +479,7 @@ impl ConnectionImpl {
     }
 
     /// Sends a request for execution and returns the first [QueryResult] received.
-    pub(crate) fn exec_and_get_first(
+    pub(crate) fn exec_with_one_result(
         &mut self,
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         payload: Value,
@@ -594,38 +597,35 @@ impl ConnectionImpl {
     }
 
     /// Attempts to create a Websocket for the given [ConOpts]
-    fn try_websocket_from_opts(opts: &ConOpts) -> ConResult {
+    fn try_websocket_from_opts(opts: &ConOpts) -> std::result::Result<WsAddr, ConnectionError> {
         let addresses = opts.parse_dsn()?;
-        let ws_prefix = opts.get_ws_prefix();
-        let mut try_count = addresses.len();
-        let mut addr_iter = addresses.into_iter();
+        let ws_prefix = opts.ws_prefix();
 
-        loop {
-            try_count -= 1;
+        let cf = addresses
+            .into_iter()
+            .try_fold(ConnectionError::InvalidDSN, |_, addr| {
+                let url = format!("{}://{}", ws_prefix, &addr);
+                Self::try_websocket_from_url(url)
+            });
 
-            if let Some(addr) = addr_iter.next() {
-                let url = format!("{}://{}", ws_prefix, addr);
-                let res = Self::try_websocket_from_url(&url);
-
-                match res {
-                    Ok(ws) => break Ok(ws),
-                    Err(e) => {
-                        if try_count == 0 {
-                            break Err(e);
-                        }
-                    }
-                }
-            } else {
-                break Err(ConnectionError::InvalidDSN);
-            }
+        match cf {
+            ControlFlow::Break(ws) => Ok(ws),
+            ControlFlow::Continue(e) => Err(e),
         }
     }
 
     /// Attempts to create a websocket for the given URL
-    fn try_websocket_from_url(url: &str) -> ConResult {
-        let url = Url::parse(url)?;
-        let (ws, _) = tungstenite::connect(url)?;
-        Ok(ws)
+    /// Issues a Break variant if the connection was established
+    /// or the Continue variant if an error was encountered.
+    fn try_websocket_from_url(url: String) -> ControlFlow<WsAddr, ConnectionError> {
+        let res = Url::parse(&url)
+            .map_err(ConnectionError::from)
+            .and_then(|url| tungstenite::connect(url).map_err(ConnectionError::from));
+
+        match res {
+            Ok((ws, _)) => ControlFlow::Break((ws, url)),
+            Err(e) => ControlFlow::Continue(e),
+        }
     }
 
     /// Gets connection attributes from Exasol
@@ -656,10 +656,10 @@ impl ConnectionImpl {
     fn login(&mut self, opts: ConOpts) -> Result<()> {
         // Should we use compression?
         #[cfg(feature = "flate2")]
-        let compress = opts.get_compression();
+        let compress = opts.compression();
 
         // Encrypt password using server's public key
-        let key = self.get_public_key(opts.get_protocol_version())?;
+        let key = self.get_public_key(opts.protocol_version())?;
         let payload = opts.into_value(key).map_err(DriverError::ConnectionError)?;
 
         // Send login request
@@ -679,6 +679,7 @@ impl ConnectionImpl {
 /// Struct holding driver related attributes
 /// unrelated to the Exasol connection itself
 pub(crate) struct DriverAttributes {
+    pub(crate) server_addr: String,
     pub(crate) fetch_size: u32,
     pub(crate) lowercase_columns: bool,
 }

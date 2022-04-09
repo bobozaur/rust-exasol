@@ -247,6 +247,7 @@ pub mod params;
 pub mod query;
 pub mod response;
 pub mod row;
+mod http_transport;
 
 pub use crate::con_opts::{ConOpts, ProtocolVersion};
 pub use crate::connection::{connect, Connection};

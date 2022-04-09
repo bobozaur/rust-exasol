@@ -507,7 +507,7 @@ impl ColumnIteratorAdapter {
         Self(RefCell::new(iter))
     }
 
-    pub(crate) fn get_num_rows(&self) -> usize {
+    pub(crate) fn num_rows(&self) -> usize {
         self.0.borrow_mut().num_rows
     }
 }
