@@ -3,7 +3,7 @@ use regex::Captures;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::net::TcpStream;
 use std::rc::Rc;
 
@@ -403,7 +403,13 @@ impl Debug for ConnectionImpl {
             .map(|(k, v)| format!("{}: {}", k, v))
             .collect::<Vec<String>>()
             .join("\n");
-        write!(f, "active: {}\n{}", self.ws.can_write(), str_attr)
+        write!(
+            f,
+            "active: {}\n{}\n{}",
+            self.ws.can_write(),
+            str_attr,
+            self.driver_attr
+        )
     }
 }
 
@@ -678,10 +684,23 @@ impl ConnectionImpl {
 
 /// Struct holding driver related attributes
 /// unrelated to the Exasol connection itself
+#[derive(Debug)]
 pub(crate) struct DriverAttributes {
     pub(crate) server_addr: String,
     pub(crate) fetch_size: u32,
     pub(crate) lowercase_columns: bool,
+}
+
+impl Display for DriverAttributes {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "server_addr: {}\n\
+             fetch_size:{}\n\
+             lowercase_columns:{}",
+            &self.server_addr, self.fetch_size, self.lowercase_columns
+        )
+    }
 }
 
 // Websocket communication functions, regular and compressed.
