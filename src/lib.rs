@@ -114,6 +114,9 @@
 //! let mut result_set = ResultSet::try_from(result).unwrap().deserialize::<(String, String)>();
 //! let row1 = result_set.next();
 //!
+//! // You can also rely on type inference:
+//! // let row1: (String, String) = result_set.next().unwrap();
+//!
 //! // Nothing stops you from changing row types
 //! // on the same result set, even while iterating through it
 //! let mut result_set = result_set.deserialize::<Vec<String>>();
@@ -135,6 +138,36 @@
 //!     let ok_row = row.unwrap();
 //!     // do stuff with row
 //! }
+//! ```
+//!
+//! To avoid dealing with [QueryResult] and simply getting a [ResultSet],
+//! with deserialization already in place, a convenience method can be used:
+//!
+//! # Errors
+//!
+//! Apart from the usual errors, this method will also error out if
+//! the underlying [QueryResult] is not the `ResultSet` variant.
+//!
+//! ```
+//! # use exasol::{connect, QueryResult};
+//! # use exasol::error::Result;
+//! # use serde_json::Value;
+//! # use std::env;
+//! #
+//! # let dsn = env::var("EXA_DSN").unwrap();
+//! # let schema = env::var("EXA_SCHEMA").unwrap();
+//! # let user = env::var("EXA_USER").unwrap();
+//! # let password = env::var("EXA_PASSWORD").unwrap();
+//! let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+//! let result_set = exa_con.execute_and_iter("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
+//!
+//! // Type inference will work its magic
+//! for result in result_set {
+//!     let row: (u8, u8) = result.unwrap();
+//! }
+//!
+//! // An equivalent would be:
+//! // result_set.for_each(|r:(u8, u8)| r.unwrap());
 //! ```
 //!
 //! # Parameter binding
@@ -243,11 +276,11 @@ extern crate core;
 pub mod con_opts;
 pub mod connection;
 pub mod error;
+mod http_transport;
 pub mod params;
 pub mod query;
 pub mod response;
 pub mod row;
-mod http_transport;
 
 pub use crate::con_opts::{ConOpts, ProtocolVersion};
 pub use crate::connection::{connect, Connection};

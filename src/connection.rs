@@ -18,8 +18,10 @@ use crate::error::{ConnectionError, DriverError, RequestError, Result};
 use crate::query::{PreparedStatement, QueryResult};
 use crate::response::{Attributes, Response, ResponseData};
 
+use crate::ResultSet;
 #[cfg(feature = "flate2")]
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+use serde::de::DeserializeOwned;
 #[cfg(feature = "flate2")]
 use std::io::Write;
 use std::ops::ControlFlow;
@@ -122,6 +124,51 @@ impl Connection {
         T: AsRef<str> + Serialize,
     {
         (*self.con).borrow_mut().execute(&self.con, &query)
+    }
+
+    /// Convenience method that executes a query and always attempts
+    /// to return a [ResultSet] to be iterated over.
+    /// The method will also automatically deserialize the [ResultSet]
+    /// into the given generic row type.
+    ///
+    /// # Errors
+    /// Apart from regular errors, this method can also return an error if the
+    /// [QueryResult] is not the [ResultSet] variant, as conversion would fail.
+    ///
+    /// ```
+    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use serde_json::Value;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let result_set = exa_con.execute_and_iter("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
+    ///
+    /// // Notice that the row type has to be given at some point,
+    /// // either in the actual method or in the row itself, letting type
+    /// // inference to work its magic
+    /// for result in result_set {
+    ///     let row: (u8, u8) = result.unwrap();
+    /// }
+    /// ```
+    #[inline]
+    pub fn execute_and_iter<R, T>(&mut self, query: T) -> Result<ResultSet<R>>
+    where
+        T: AsRef<str> + Serialize,
+        R: DeserializeOwned,
+    {
+        (*self.con)
+            .borrow_mut()
+            .execute(&self.con, &query)
+            .and_then(|q| {
+                ResultSet::try_from(q)
+                    .map_err(From::from)
+                    .map(|r| r.deserialize())
+            })
     }
 
     /// Sends multiple queries to the database and waits for the result.

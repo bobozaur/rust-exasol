@@ -419,7 +419,7 @@ pub(crate) enum QueryResultDe {
     #[serde(rename_all = "camelCase")]
     ResultSet { result_set: ResultSetDe },
     #[serde(rename_all = "camelCase")]
-    RowCount { row_count: u32 },
+    RowCount { row_count: usize },
 }
 
 #[test]
@@ -456,10 +456,10 @@ fn deser_result_set() {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResultSetDe {
     #[serde(rename = "numRows")]
-    pub(crate) total_rows_num: u32,
+    pub(crate) total_rows_num: usize,
     #[serde(rename = "numRowsInMessage")]
     pub(crate) chunk_rows_num: usize,
-    pub(crate) num_columns: u8,
+    pub(crate) num_columns: u16,
     pub(crate) result_set_handle: Option<u16>,
     pub(crate) columns: Vec<Column>,
     #[serde(default, deserialize_with = "to_row_major")]

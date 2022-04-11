@@ -41,12 +41,10 @@ mod tests {
             .execute("SELECT * FROM EXA_RUST_TEST LIMIT 2001;")
             .unwrap();
 
-        let result_set = ResultSet::try_from(result)
-            .unwrap()
-            .deserialize();
+        let result_set = ResultSet::try_from(result).unwrap().deserialize();
         for row in result_set {
             let record: (String, String, u16) = row.unwrap();
-            println!("{:?}", row.unwrap());
+            println!("{:?}", record);
         }
 
         use std::time::Instant;

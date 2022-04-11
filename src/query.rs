@@ -1,5 +1,5 @@
 use crate::connection::ConnectionImpl;
-use crate::error::{ConversionError, DataError, DriverError, RequestError, Result};
+use crate::error::{ConversionError, DataError, DriverError, Error, RequestError, Result};
 use crate::response::{Column, QueryResultDe, ResultSetDe};
 use crate::response::{ParameterData, PreparedStatementDe};
 use crate::row::{to_col_major, Row};
@@ -16,7 +16,7 @@ use std::rc::Rc;
 /// `RowCount` variant holds the affected row count
 pub enum QueryResult {
     ResultSet(ResultSet),
-    RowCount(u32),
+    RowCount(usize),
 }
 
 impl Debug for QueryResult {
@@ -29,25 +29,23 @@ impl Debug for QueryResult {
 }
 
 impl TryFrom<QueryResult> for ResultSet {
-    type Error = ConversionError;
+    type Error = Error;
 
     #[inline]
-    fn try_from(value: QueryResult) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: QueryResult) -> Result<Self> {
         match value {
             QueryResult::ResultSet(r) => Ok(r),
-            _ => Err(ConversionError::ResultSetError),
+            _ => Err(DriverError::ConversionError(ConversionError::ResultSetError).into()),
         }
     }
 }
 
-impl TryFrom<QueryResult> for u32 {
-    type Error = ConversionError;
-
+impl From<QueryResult> for usize {
     #[inline]
-    fn try_from(value: QueryResult) -> std::result::Result<Self, Self::Error> {
+    fn from(value: QueryResult) -> Self {
         match value {
-            QueryResult::RowCount(r) => Ok(r),
-            _ => Err(ConversionError::RowCountError),
+            QueryResult::RowCount(r) => r,
+            QueryResult::ResultSet(rs) => rs.total_rows_num,
         }
     }
 }
@@ -101,9 +99,9 @@ impl QueryResult {
 /// the [Connection](crate::Connection), until the result set is entirely read.
 #[allow(unused)]
 pub struct ResultSet<T: DeserializeOwned = Vec<Value>> {
-    num_columns: u8,
-    total_rows_num: u32,
-    total_rows_pos: u32,
+    num_columns: u16,
+    total_rows_num: usize,
+    total_rows_pos: usize,
     chunk_rows_num: usize,
     chunk_rows_pos: usize,
     result_set_handle: Option<u16>,
@@ -142,14 +140,14 @@ where
 
     /// Returns the number of columns in the result set.
     #[inline]
-    pub fn num_columns(&self) -> &u8 {
-        &self.num_columns
+    pub fn num_columns(&self) -> u16 {
+        self.num_columns
     }
 
     /// Returns the number of rows in the result set.
     #[inline]
-    pub fn num_rows(&self) -> &u32 {
-        &self.total_rows_num
+    pub fn num_rows(&self) -> usize {
+        self.total_rows_num
     }
 
     /// Method that consumes self to return a new [ResultSet]

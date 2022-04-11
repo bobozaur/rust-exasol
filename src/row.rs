@@ -426,15 +426,13 @@ where
     C: ?Sized + Hash + Ord + Display,
     String: Borrow<C>,
 {
-    columns.iter().try_for_each(
-        |col| match map.remove(col) {
-            None => Err(DataError::MissingColumn(col.to_string())),
-            Some(v) => {
-                flat_data.push(v);
-                Ok(())
-            }
-        },
-    )
+    columns.iter().try_for_each(|col| match map.remove(col) {
+        None => Err(DataError::MissingColumn(col.to_string())),
+        Some(v) => {
+            flat_data.push(v);
+            Ok(())
+        }
+    })
 }
 
 /// Extends the flat_data buffer with another row
