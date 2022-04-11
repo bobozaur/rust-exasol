@@ -537,17 +537,9 @@ impl ConnectionImpl {
         con_impl: &Rc<RefCell<ConnectionImpl>>,
         payload: Value,
     ) -> Result<QueryResult> {
-        self.exec_with_results(con_impl, payload)
-            .and_then(|mut v: Vec<QueryResult>| {
-                if v.is_empty() {
-                    Err(
-                        DriverError::RequestError(RequestError::InvalidResponse("result sets"))
-                            .into(),
-                    )
-                } else {
-                    Ok(v.swap_remove(0))
-                }
-            })
+        self.exec_with_results(con_impl, payload)?
+            .pop()
+            .ok_or(DriverError::RequestError(RequestError::InvalidResponse("result sets")).into())
     }
 
     /// Creates a prepared statement
