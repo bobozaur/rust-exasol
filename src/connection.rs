@@ -7,7 +7,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::net::TcpStream;
 use std::rc::Rc;
 
-use rsa::{pkcs1::FromRsaPublicKey, RsaPublicKey};
+use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};

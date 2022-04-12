@@ -306,9 +306,8 @@ impl ConOpts {
     #[allow(unused)]
     pub fn set_encryption(&mut self, flag: bool) {
         #[cfg(any(feature = "native-tls", feature = "rustls"))]
-        {
-            self.0.use_encryption = flag;
-        }
+        self.0.use_encryption = flag;
+
         #[cfg(not(any(feature = "native-tls", feature = "rustls")))]
         panic!("native-tls or rustls features must be enabled to set encryption")
     }
