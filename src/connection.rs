@@ -613,7 +613,7 @@ impl ConnectionImpl {
 
         main_barrier.wait();
         let query = format!(
-            "EXPORT (SELECT * FROM EXA_RUST_TEST LIMIT 10000) INTO CSV\n{}",
+            "EXPORT (SELECT * FROM EXA_RUST_TEST LIMIT 100000) INTO CSV\n{}",
             hosts
         );
         self.execute(con_impl, &query)

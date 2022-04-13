@@ -161,6 +161,7 @@ where
 
         while run.load(Ordering::Acquire) {
             let size = Self::read_chunk_size(&mut reader)?;
+            println!("{:?}", &size);
             match size == 0 {
                 true => break,
                 false => self.read_chunk(&mut reader, size)?,
@@ -246,6 +247,7 @@ pub(crate) trait HttpTransport {
             let mut stream = Self::promote_stream(stream)?;
             self.process_data(&mut stream, run).map_err(|e| {
                 stream.write_all(ERROR_HEADERS).ok();
+                stream.write_all(END_PACKET).ok();
                 e
             })?
         }
