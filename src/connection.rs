@@ -28,6 +28,7 @@ use std::io::Write;
 use std::io::Write;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvError;
 use std::sync::{mpsc, Arc, Barrier};
 use std::thread;
 
@@ -552,28 +553,31 @@ impl ConnectionImpl {
     where
         T: DeserializeOwned + Send + 'static,
     {
-        let main_barrier = Arc::new(Barrier::new(num_threads + 1));
-        let barrier = main_barrier.clone();
-        let run_flag = Arc::new(AtomicBool::new(true));
-        let run = run_flag.clone();
+        let barrier = Arc::new(Barrier::new(num_threads + 1));
+        let mut barrier_vec = vec![barrier.clone(); num_threads];
+
+        let run = Arc::new(AtomicBool::new(true));
+        let mut run_vec = vec![run.clone(); num_threads];
+
         let (addr_sender, addr_receiver) = mpsc::channel();
-        let server_addr = Arc::clone(&self.driver_attr.server_addr);
+        let mut addr_sender_vec = vec![addr_sender.clone(); num_threads - 1];
+        addr_sender_vec.push(addr_sender);
+
+        let mut server_addr_vec = vec![Arc::clone(&self.driver_attr.server_addr); num_threads];
 
         let handle = thread::spawn(move || {
-            let barrier = barrier.clone();
-            let run = run.clone();
-            let server_addr = server_addr.clone();
-            let addr_sender = addr_sender;
             let (data_sender, data_receiver) = mpsc::channel();
+            let mut data_sender_vec = vec![data_sender.clone(); num_threads - 1];
+            data_sender_vec.push(data_sender);
 
             let handles = (0..num_threads)
                 .into_iter()
-                .map(|_| {
-                    let barrier = barrier.clone();
-                    let run = run.clone();
-                    let server_addr = server_addr.clone();
-                    let addr_sender = addr_sender.clone();
-                    let data_sender = data_sender.clone();
+                .map(|i| {
+                    let barrier = barrier_vec.pop().unwrap();
+                    let run = run_vec.pop().unwrap();
+                    let addr_sender = addr_sender_vec.pop().unwrap();
+                    let server_addr = server_addr_vec.pop().unwrap();
+                    let data_sender = data_sender_vec.pop().unwrap();
 
                     thread::spawn(move || {
                         let mut het = HttpExportThread::new(data_sender);
@@ -582,42 +586,44 @@ impl ConnectionImpl {
                 })
                 .collect::<Vec<_>>();
 
-            drop(data_sender);
-
-            let data = data_receiver
-                .into_iter()
-                .collect::<std::result::Result<Vec<T>, HttpTransportError>>();
+            let data = data_receiver.into_iter().collect::<Vec<T>>();
 
             handles
                 .into_iter()
-                .map(|h| h.join().map_err(|_| HttpTransportError::ThreadError))
-                .collect::<std::result::Result<Vec<()>, HttpTransportError>>();
-            data
+                .map(|h| {
+                    h.join()
+                        .map_err(|_| HttpTransportError::ThreadError)
+                        .and_then(|r| r)
+                })
+                .collect::<std::result::Result<Vec<()>, HttpTransportError>>()
+                .map(|_| data)
         });
 
         let hosts = (0..num_threads)
             .into_iter()
-            .map(|i| match addr_receiver.recv() {
-                Err(e) => Err(e.into()),
-                Ok(r) => match r {
-                    Ok(s) => Ok(format!("AT '{}' FILE '{:0>3}.CSV'", s, i)),
-                    Err(e) => Err(e),
-                },
+            .map(|i| {
+                addr_receiver
+                    .recv()
+                    .map(|s| format!("AT '{}' FILE '{:0>3}.CSV'", s, i))
             })
-            .collect::<std::result::Result<Vec<String>, HttpTransportError>>()
+            .collect::<std::result::Result<Vec<String>, RecvError>>()
+            .map(|v| v.join("\n"))
             .map_err(|e| {
-                run_flag.store(false, Ordering::Release);
-                DriverError::HttpTransportError(e)
-            })?
-            .join("\n");
+                run.store(false, Ordering::Release);
+                DriverError::HttpTransportError(e.into())
+            });
 
-        main_barrier.wait();
-        let query = format!(
-            "EXPORT (SELECT * FROM EXA_RUST_TEST LIMIT 100000) INTO CSV\n{}",
-            hosts
-        );
-        self.execute(con_impl, &query)
-            .map(|_| handle.join().unwrap().unwrap())
+        barrier.wait();
+
+        let query = format!("EXPORT EXA_LONG INTO CSV\n{}", hosts?);
+        let query_res = self.execute(con_impl, &query);
+
+        handle
+            .join()
+            .map_err(|_| HttpTransportError::ThreadError)
+            .and_then(|r| r)
+            .map_err(|e| DriverError::HttpTransportError(e).into())
+            .and_then(|data| query_res.map(|_| data))
     }
 
     /// Sends the payload to Exasol to execute multiple queries

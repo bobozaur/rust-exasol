@@ -1,6 +1,6 @@
 use crate::error::HttpTransportError;
 use crossbeam::queue::ArrayQueue;
-use csv::{Reader, WriterBuilder};
+use csv::{ByteRecord, Reader, WriterBuilder};
 #[cfg(feature = "native-tls")]
 use native_tls::{Identity, TlsAcceptor, TlsStream};
 use rcgen::{Certificate, CertificateParams, KeyPair, PKCS_RSA_SHA256};
@@ -99,15 +99,16 @@ impl NoDelay for MaybeTlsStream {
     }
 }
 
-pub(crate) struct HttpExportThread<T: DeserializeOwned>(Sender<HttpResult<T>>);
+pub(crate) struct HttpExportThread<T: DeserializeOwned>(Sender<T>);
 
 impl<T> HttpExportThread<T>
 where
     T: DeserializeOwned,
 {
-    pub(crate) fn new(data_sender: Sender<HttpResult<T>>) -> Self {
+    pub(crate) fn new(data_sender: Sender<T>) -> Self {
         Self(data_sender)
     }
+
     fn read_chunk_size<R>(reader: &mut R) -> HttpResult<usize>
     where
         R: BufRead,
@@ -122,28 +123,22 @@ where
         }
     }
 
-    fn read_chunk<R>(&mut self, reader: &mut R, size: usize) -> HttpResult<()>
+    fn read_chunk<R>(reader: &mut R, size: usize, buf: &mut Vec<u8>) -> HttpResult<()>
     where
         R: BufRead,
     {
-        let mut buf = vec![0; size];
-        reader.read_exact(&mut buf)?;
+        // Adding 2 to size to read the trailing \r\n that delimit the data chunk
+        let mut tmp_buf = vec![0; size + 2];
+        reader.read_exact(&mut tmp_buf)?;
 
-        let mut csv_reader = Reader::from_reader(buf.as_slice());
-        for result in csv_reader.deserialize() {
-            let row = result?;
-            self.0
-                .send(Ok(row))
-                .map_err(|_| HttpTransportError::SendError)?;
-        }
-
-        let mut end = [0; 2];
-        reader.read_exact(&mut end)?;
-
-        match end == [b'\r', b'\n'] {
+        // Check chunk end for trailing delimiter
+        // Note the reversed delimiter due to subsequent pop() calls
+        match [tmp_buf.pop(), tmp_buf.pop()] == [Some(b'\n'), Some(b'\r')] {
             true => Ok(()),
-            false => Err(HttpTransportError::DelimiterError(end)),
-        }
+            false => Err(HttpTransportError::DelimiterError),
+        }?;
+
+        Ok(buf.extend(tmp_buf))
     }
 }
 
@@ -156,21 +151,28 @@ where
         stream: &mut MaybeTlsStream,
         run: &Arc<AtomicBool>,
     ) -> HttpResult<()> {
+        let mut buf = Vec::new();
         let mut reader = BufReader::new(stream);
         Self::skip_headers(&mut reader, run)?;
 
         while run.load(Ordering::Acquire) {
             let size = Self::read_chunk_size(&mut reader)?;
-            println!("{:?}", &size);
             match size == 0 {
                 true => break,
-                false => self.read_chunk(&mut reader, size)?,
+                false => Self::read_chunk(&mut reader, size, &mut buf)?,
             }
         }
 
         let stream = reader.into_inner();
         stream.write_all(SUCCESS_HEADERS)?;
         stream.write_all(END_PACKET)?;
+
+        let csv_reader = Reader::from_reader(buf.as_slice());
+        for row in csv_reader.into_deserialize() {
+            self.0
+                .send(row?)
+                .map_err(|_| HttpTransportError::SendError)?;
+        }
         Ok(())
     }
 }
@@ -226,13 +228,13 @@ pub(crate) trait HttpTransport {
         server_addr: A,
         barrier: Arc<Barrier>,
         run: Arc<AtomicBool>,
-        mut addr_sender: Sender<HttpResult<String>>,
-    ) where
+        mut addr_sender: Sender<String>,
+    ) -> HttpResult<()> where
         A: ToSocketAddrs,
     {
         Self::initialize(server_addr, &mut addr_sender)
             .and_then(|stream| self.do_transport(stream, barrier, &run))
-            .unwrap_or_else(|e| Self::report_error(&mut addr_sender, Err(e), &run));
+            .map_err(|e| {run.store(false, Ordering::Release); e})
     }
 
     fn do_transport(
@@ -273,22 +275,13 @@ pub(crate) trait HttpTransport {
         Ok(MaybeTlsStream::Plain(stream))
     }
 
-    fn report_error(
-        reporter: &mut Sender<HttpResult<String>>,
-        msg: HttpResult<String>,
-        run: &Arc<AtomicBool>,
-    ) {
-        reporter.send(msg).ok();
-        run.store(false, Ordering::Release);
-    }
-
     /// Connects a [TcpStream] to the Exasol server,
     /// gets an internal Exasol address for HTTP transport,
     /// sends the address back to the parent thread
     /// and returns the [TcpStream] for further use.
     fn initialize<A>(
         server_addr: A,
-        addr_sender: &mut Sender<HttpResult<String>>,
+        addr_sender: &mut Sender<String>,
     ) -> HttpResult<TcpStream>
     where
         A: ToSocketAddrs,
@@ -310,7 +303,7 @@ pub(crate) trait HttpTransport {
             .for_each(|b| ipaddr.push(char::from(*b)));
 
         addr_sender
-            .send(Ok(format!("http://{}:{}", ipaddr, port)))
+            .send(format!("http://{}:{}", ipaddr, port))
             .map_err(|_| HttpTransportError::SendError)?;
         Ok(stream)
     }

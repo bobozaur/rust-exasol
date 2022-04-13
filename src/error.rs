@@ -146,8 +146,8 @@ pub enum HttpTransportError {
     ChunkSizeError(#[from] ParseIntError),
     #[error(transparent)]
     CSVError(#[from] csv::Error),
-    #[error("Invalid chunk delimiter in HTTP stream - {0:?}")]
-    DelimiterError([u8; 2]),
+    #[error("Invalid chunk delimiter in HTTP stream")]
+    DelimiterError,
     #[error("Error receiving data across channel")]
     RecvError(#[from] RecvError),
     #[error("Error sending data across channel")]
