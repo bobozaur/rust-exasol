@@ -4,27 +4,32 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
+use std::fs::OpenOptions;
 use std::net::TcpStream;
 use std::rc::Rc;
 
-use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey};
+use rsa::{pkcs1::DecodeRsaPublicKey, RsaPublicKey};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
-use crate::error::{ConnectionError, DriverError, RequestError, Result};
+use crate::error::{ConnectionError, DriverError, HttpTransportError, RequestError, Result};
+use crate::http_transport::{HttpExportThread, HttpTransport};
 use crate::query::{PreparedStatement, QueryResult};
 use crate::response::{Attributes, Response, ResponseData};
-
 use crate::ResultSet;
 #[cfg(feature = "flate2")]
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use serde::de::DeserializeOwned;
 #[cfg(feature = "flate2")]
 use std::io::Write;
+use std::io::Write;
 use std::ops::ControlFlow;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Barrier};
+use std::thread;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
@@ -124,6 +129,28 @@ impl Connection {
         T: AsRef<str> + Serialize,
     {
         (*self.con).borrow_mut().execute(&self.con, &query)
+    }
+    /// ```
+    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use serde_json::Value;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let result = exa_con.export("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
+    ///
+    /// result.into_iter().take(5).for_each(|v: (String, String, u32)| println!("{:?}", v))
+    /// ```
+    pub fn export<T, R>(&mut self, query: T) -> Result<Vec<R>>
+    where
+        T: AsRef<str> + Serialize,
+        R: DeserializeOwned + Send + 'static,
+    {
+        (*self.con).borrow_mut().export(&self.con, 1)
     }
 
     /// Convenience method that executes a query and always attempts
@@ -476,7 +503,7 @@ impl ConnectionImpl {
         let exa_attr = HashMap::new();
 
         let driver_attr = DriverAttributes {
-            server_addr: addr,
+            server_addr: Arc::new(addr),
             fetch_size: opts.fetch_size(),
             lowercase_columns: opts.lowercase_columns(),
         };
@@ -515,6 +542,82 @@ impl ConnectionImpl {
     {
         let payload = json!({"command": "execute", "sqlText": query});
         self.exec_with_one_result(con_impl, payload)
+    }
+
+    pub(crate) fn export<T>(
+        &mut self,
+        con_impl: &Rc<RefCell<ConnectionImpl>>,
+        num_threads: usize,
+    ) -> Result<Vec<T>>
+    where
+        T: DeserializeOwned + Send + 'static,
+    {
+        let main_barrier = Arc::new(Barrier::new(num_threads + 1));
+        let barrier = main_barrier.clone();
+        let run_flag = Arc::new(AtomicBool::new(true));
+        let run = run_flag.clone();
+        let (addr_sender, addr_receiver) = mpsc::channel();
+        let server_addr = Arc::clone(&self.driver_attr.server_addr);
+
+        let handle = thread::spawn(move || {
+            let barrier = barrier.clone();
+            let run = run.clone();
+            let server_addr = server_addr.clone();
+            let addr_sender = addr_sender;
+            let (data_sender, data_receiver) = mpsc::channel();
+
+            let handles = (0..num_threads)
+                .into_iter()
+                .map(|_| {
+                    let barrier = barrier.clone();
+                    let run = run.clone();
+                    let server_addr = server_addr.clone();
+                    let addr_sender = addr_sender.clone();
+                    let data_sender = data_sender.clone();
+
+                    thread::spawn(move || {
+                        let mut het = HttpExportThread::new(data_sender);
+                        het.start(server_addr.as_str(), barrier, run, addr_sender)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            drop(data_sender);
+
+            let data = data_receiver
+                .into_iter()
+                .collect::<std::result::Result<Vec<T>, HttpTransportError>>();
+
+            handles
+                .into_iter()
+                .map(|h| h.join().map_err(|_| HttpTransportError::ThreadError))
+                .collect::<std::result::Result<Vec<()>, HttpTransportError>>();
+            data
+        });
+
+        let hosts = (0..num_threads)
+            .into_iter()
+            .map(|i| match addr_receiver.recv() {
+                Err(e) => Err(e.into()),
+                Ok(r) => match r {
+                    Ok(s) => Ok(format!("AT '{}' FILE '{:0>3}.CSV'", s, i)),
+                    Err(e) => Err(e),
+                },
+            })
+            .collect::<std::result::Result<Vec<String>, HttpTransportError>>()
+            .map_err(|e| {
+                run_flag.store(false, Ordering::Release);
+                DriverError::HttpTransportError(e)
+            })?
+            .join("\n");
+
+        main_barrier.wait();
+        let query = format!(
+            "EXPORT (SELECT * FROM EXA_RUST_TEST LIMIT 10000) INTO CSV\n{}",
+            hosts
+        );
+        self.execute(con_impl, &query)
+            .map(|_| handle.join().unwrap().unwrap())
     }
 
     /// Sends the payload to Exasol to execute multiple queries
@@ -649,8 +752,7 @@ impl ConnectionImpl {
         let cf = addresses
             .into_iter()
             .try_fold(ConnectionError::InvalidDSN, |_, addr| {
-                let url = format!("{}://{}", ws_prefix, &addr);
-                Self::try_websocket_from_url(url)
+                Self::try_websocket_from_url((ws_prefix, addr))
             });
 
         match cf {
@@ -662,13 +764,14 @@ impl ConnectionImpl {
     /// Attempts to create a websocket for the given URL
     /// Issues a Break variant if the connection was established
     /// or the Continue variant if an error was encountered.
-    fn try_websocket_from_url(url: String) -> ControlFlow<WsAddr, ConnectionError> {
-        let res = Url::parse(&url)
+    fn try_websocket_from_url(url: (&str, String)) -> ControlFlow<WsAddr, ConnectionError> {
+        let full_url = format!("{}://{}", &url.0, &url.1);
+        let res = Url::parse(&full_url)
             .map_err(ConnectionError::from)
             .and_then(|url| tungstenite::connect(url).map_err(ConnectionError::from));
 
         match res {
-            Ok((ws, _)) => ControlFlow::Break((ws, url)),
+            Ok((ws, _)) => ControlFlow::Break((ws, url.1)),
             Err(e) => ControlFlow::Continue(e),
         }
     }
@@ -690,7 +793,7 @@ impl ConnectionImpl {
             .and_then(|p| p.try_to_public_key_string())?;
 
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)
-            .map_err(ConnectionError::PKCSError)
+            .map_err(ConnectionError::PKCS1Error)
             .map_err(DriverError::ConnectionError)?)
     }
 
@@ -725,7 +828,7 @@ impl ConnectionImpl {
 /// unrelated to the Exasol connection itself
 #[derive(Debug)]
 pub(crate) struct DriverAttributes {
-    pub(crate) server_addr: String,
+    pub(crate) server_addr: Arc<String>,
     pub(crate) fetch_size: u32,
     pub(crate) lowercase_columns: bool,
 }

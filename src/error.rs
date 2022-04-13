@@ -1,8 +1,10 @@
 use crate::response::{Attributes, ExaError, Response, ResponseData};
 use rsa;
 use serde_json;
+use std::array::TryFromSliceError;
 use std::fmt::Debug;
 use std::num::ParseIntError;
+use std::sync::mpsc::RecvError;
 use thiserror::Error as ThisError;
 use tungstenite;
 use url;
@@ -51,6 +53,8 @@ pub enum DriverError {
     RequestError(#[from] RequestError),
     #[error(transparent)]
     ConnectionError(#[from] ConnectionError),
+    #[error(transparent)]
+    HttpTransportError(#[from] HttpTransportError),
 }
 
 #[derive(Debug, ThisError)]
@@ -114,7 +118,42 @@ pub enum ConnectionError {
     #[error(transparent)]
     CryptographyError(#[from] rsa::errors::Error),
     #[error(transparent)]
-    PKCSError(#[from] rsa::pkcs1::Error),
+    PKCS1Error(#[from] rsa::pkcs1::Error),
     #[error(transparent)]
     WebsocketError(#[from] tungstenite::error::Error),
+}
+
+/// HTTP transport related errors
+#[derive(Debug, ThisError)]
+pub enum HttpTransportError {
+    #[error(transparent)]
+    RsaError(#[from] rsa::errors::Error),
+    #[error(transparent)]
+    PKCS8Error(#[from] rsa::pkcs8::Error),
+    #[error(transparent)]
+    CertificateError(#[from] rcgen::RcgenError),
+    #[cfg(feature = "native-tls")]
+    #[error(transparent)]
+    NativeTlsError(#[from] native_tls::Error),
+    #[cfg(feature = "rustls")]
+    #[error(transparent)]
+    RustlsError(#[from] rustls::Error),
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+    #[error("Could not parse port for HTTP transport")]
+    PortParseError(#[from] TryFromSliceError),
+    #[error("Could not parse chunk size")]
+    ChunkSizeError(#[from] ParseIntError),
+    #[error(transparent)]
+    CSVError(#[from] csv::Error),
+    #[error("Invalid chunk delimiter in HTTP stream - {0:?}")]
+    DelimiterError([u8; 2]),
+    #[error("Error receiving data across channel")]
+    RecvError(#[from] RecvError),
+    #[error("Error sending data across channel")]
+    SendError,
+    #[error("Could not join thread")]
+    ThreadError,
+    #[error("Could not extract socket out of CSV writer")]
+    CsvSocketError,
 }

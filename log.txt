@@ -1,0 +1,9 @@
+receiver is in place
+executing query
+skipped headers
+read size
+read size
+wrote final packets
+thread finished!
+we received data
+we have data
