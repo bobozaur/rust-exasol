@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
+/// Convenience alias
 type BindResult = std::result::Result<String, BindError>;
 
 /// Binds named or positional parameters from a type implementing [Serialize].
@@ -118,19 +119,21 @@ fn parametrize_query(query: &str, val: Value) -> BindResult {
 }
 
 /// Bind map elements to the query
-#[inline]
 fn do_param_binding(query: &str, map: HashMap<String, String>) -> BindResult {
     let re = regex!(r"\\(:\w+)|[:\w]:\w+|:\w+:|:(\w+)");
     let mut result = Ok(()); // Will store errors here
 
-    // Capture group 1 is Some only when an escaped parameter construct
-    // is matched. Returning the group gets rid of the escape backslash.
-    //
     // Capture group 2 is Some when an actual parameter is matched,
     // in which case it needs to be taken from the map.
+    // Not finding it results in an empty string being used instead
+    // and the error stored outside of the closure
     //
-    // Otherwise, the entire match is returned as-is, as it represents
-    // a regex match that we purposely ignore.
+    // Capture group 1 is Some only when an escaped parameter construct
+    // is matched(e.g: "\:PARAM"). Returning the group gets rid of the escape backslash.
+    //
+    // Otherwise, capture group 0, AKA the entire match, is returned as-is,
+    // as it represents a regex match that we purposely ignore.
+    // It's safe to unwrap it because it wouldn't be there if there is no match.
     let q = re.replace_all(query, |cap: &Captures| {
         cap.get(2)
             .map(|m| match map.get(m.as_str()) {
@@ -169,7 +172,6 @@ fn gen_seq_params(params: Vec<Value>) -> HashMap<String, String> {
 }
 
 /// Transforms [Value] to it's SQL string representation
-#[inline]
 fn into_sql_param(val: Value) -> String {
     match val {
         Value::Null => "NULL".to_owned(),
@@ -192,7 +194,6 @@ fn into_sql_param(val: Value) -> String {
 
 /// Concatenates an iterator of Strings into a parameter list
 /// such as "(a, b, c)"
-#[inline]
 fn build_param_list<I>(iter: I) -> String
 where
     I: Iterator<Item = String>,

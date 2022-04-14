@@ -27,28 +27,27 @@
 //! let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 //!
 //! // Executing a statement
-//! let result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
+//! let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
 //!
-//! // The ResultSet is a lazy iterator, fetching rows as needed.
-//! // For that reason, it can only be iterated over when owned,
-//! // as it gets consumed in the process.
-//! if let QueryResult::ResultSet(r) = result {
-//!     // Each row is a Result<Vec<serde_json::Value>>
-//!     for row in r {
-//!         for col_val in row.unwrap() {
-//!             // Columns values are of type serde_json::Value
-//!             println!("{}", col_val);
-//!         }
-//!     }
-//! }
+//! // Retrieving data associated with the result set.
+//! // A Vec of rows is returned, and the row type in this case will be Vec<String>.
+//! let data: Vec<Vec<String>> = exa_con.retrieve_rows(&mut result).unwrap();
 //! ```
 //!
-//! Keeping in mind that the result set is an iterator when owned,
-//! the full iterator toolset can be used.
+//! Data is retrieved in chunks in the [ResultSet] buffer and only concatenated
+//! in the [Connection::retrieve_rows] method. The buffer size can be changed either in the [ConOpts]
+//! or through the [Connection::set_fetch_size] method.
+//! A lazier approach can be employed by using [Connection::retrieve_nrows] instead, controlling
+//! thus how many rows are returned.
 //!
-//! Additionally, `TryFrom` is implemented for [QueryResult](crate::query::QueryResult) to make
-//! [ResultSet](crate::query::ResultSet) retrieval more convenient, instead of having to match
-//! against it (the same can be done for the `u32` representing the affected rows count).
+//! # Cleanup
+//! [QueryResult] structs will automatically close once fully retrieved. If that does not happen,
+//! they will behave like [PreparedStatement] structs in the sense that they should be manually
+//! closed, or they will be closed when the [Connection] is dropped.
+//!
+//! # Best practice
+//! As a best practice, you should always close [QueryResult] and [PreparedStatement] instances
+//! once they are no longer needed.
 //!
 //! ```
 //! use exasol::error::Result;
@@ -62,25 +61,26 @@
 //! let password = env::var("EXA_PASSWORD").unwrap();
 //!
 //! let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-//! let result = exa_con.execute("SELECT OBJECT_NAME FROM EXA_ALL_OBJECTS LIMIT 5000;").unwrap();
+//! let mut result = exa_con.execute("SELECT * FROM EXA_RUST_TEST LIMIT 1000;").unwrap();
+//! let mut counter = 0;
 //!
-//! ResultSet::try_from(result)
-//!     .unwrap()
-//!     .by_ref()
-//!     .take(500)
-//!     .collect::<Result<Vec<Vec<Value>>>>()
-//!     .unwrap()
-//!     .into_iter()
-//!     .map(|row| row[0].as_str().unwrap().to_owned())
-//!     .collect::<Vec<String>>();
+//! loop {
+//!     // Only enough calls necessary to retrieve 100 rows will be made to the database.
+//!     // Any leftover data in the chunk will still be present in the ResultSet buffer.
+//!     // and can be used in later retrievals.
+//!     let data: Vec<(String, String, u16)> = exa_con.retrieve_nrows(&mut result, 100).unwrap();
+//!     // do stuff with data
+//!
+//!     counter += 1;
+//!     if counter == 3 {
+//!         break;
+//!     }
+//! }
+//!
+//! // Failing to close the result here will leave it up to the
+//! // Connection to do it when it is dropped.
+//! exa_con.close_result(result);
 //! ```
-//!
-//! In the example above, note the `collect::<Result<Vec<Row>>>()` call.
-//! When iterating over a result set, because fetch requests may fail, every row
-//! (which by default is a [Vec<serde_json::Value>]) is in the form of a [Result].
-//!
-//! `collect` can handle that for us and convert a [Vec<Result<Row>>] into a [Result<Vec<Row>>],
-//! stopping on the first error encountered, if any.
 //!
 //! # Custom Row Type
 //!
@@ -108,21 +108,19 @@
 //! let user = env::var("EXA_USER").unwrap();
 //! let password = env::var("EXA_PASSWORD").unwrap();
 //! let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-//! let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
+//! let mut result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
 //!
 //! // Change the expected row type with the turbofish notation
-//! let mut result_set = ResultSet::try_from(result).unwrap().deserialize::<(String, String)>();
-//! let row1 = result_set.next();
+//! let mut data = exa_con.retrieve_nrows::<[u8; 2]>(&mut result, 1).unwrap();
+//! let row1 = data[0];
 //!
-//! // You can also rely on type inference:
-//! // let row1: (String, String) = result_set.next().unwrap();
-//!
+//! // You can also rely on type inference.
 //! // Nothing stops you from changing row types
-//! // on the same result set, even while iterating through it
-//! let mut result_set = result_set.deserialize::<Vec<String>>();
-//! let row2 = result_set.next();
+//! // on the same result set.
+//! let mut data: Vec<u8> = exa_con.retrieve_nrows(&mut result, 1).unwrap();;
+//! let row2 = data[0];
 //!
-//! let result = exa_con.execute("SELECT 1 as col1, 2 as col2, 3 as col3 \
+//! let mut result = exa_con.execute("SELECT 1 as col1, 2 as col2, 3 as col3 \
 //!                               UNION ALL \
 //!                               SELECT 4 as col1, 5 as col2, 6 as col3;").unwrap();
 //!
@@ -133,41 +131,10 @@
 //!     col3: u8,
 //! }
 //!
-//! let result_set = ResultSet::try_from(result).unwrap().deserialize::<Test>();
-//! for row in result_set.deserialize::<Test>() {
-//!     let ok_row = row.unwrap();
+//! let data = exa_con.retrieve_rows::<Test>(&mut result).unwrap();
+//! for row in data {
 //!     // do stuff with row
 //! }
-//! ```
-//!
-//! To avoid dealing with [QueryResult] and simply getting a [ResultSet],
-//! with deserialization already in place, a convenience method can be used:
-//!
-//! # Errors
-//!
-//! Apart from the usual errors, this method will also error out if
-//! the underlying [QueryResult] is not the `ResultSet` variant.
-//!
-//! ```
-//! # use exasol::{connect, QueryResult};
-//! # use exasol::error::Result;
-//! # use serde_json::Value;
-//! # use std::env;
-//! #
-//! # let dsn = env::var("EXA_DSN").unwrap();
-//! # let schema = env::var("EXA_SCHEMA").unwrap();
-//! # let user = env::var("EXA_USER").unwrap();
-//! # let password = env::var("EXA_PASSWORD").unwrap();
-//! let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-//! let result_set = exa_con.execute_and_iter("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
-//!
-//! // Type inference will work its magic
-//! for result in result_set {
-//!     let row: (u8, u8) = result.unwrap();
-//! }
-//!
-//! // An equivalent would be:
-//! // result_set.for_each(|r:(u8, u8)| r.unwrap());
 //! ```
 //!
 //! # Parameter binding
@@ -268,7 +235,7 @@
 //!
 //! # Batch Execution
 //!
-//! Faster query execution can be achieved through either
+//! Batch query execution can be achieved through either
 //! [Connection::execute_batch] or [PreparedStatement].
 
 extern crate core;
@@ -285,6 +252,6 @@ pub mod row;
 pub use crate::con_opts::{ConOpts, ProtocolVersion};
 pub use crate::connection::{connect, Connection};
 pub use crate::params::bind;
-pub use crate::query::{PreparedStatement, QueryResult, ResultSet};
-pub use crate::response::{Column, DataType};
+pub use crate::query::{QueryResult, ResultSet};
+pub use crate::response::{Column, DataType, PreparedStatement};
 pub use crate::row::deserialize_as_seq;

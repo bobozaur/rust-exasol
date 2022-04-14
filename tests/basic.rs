@@ -31,43 +31,43 @@ mod tests {
     #[test]
     #[allow(unused)]
     fn it_works() {
-        let dsn = env::var("EXA_DSN").unwrap();
-        let schema = env::var("EXA_SCHEMA").unwrap();
-        let user = env::var("EXA_USER").unwrap();
-        let password = env::var("EXA_PASSWORD").unwrap();
-
-        let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-        let result = exa_con
-            .execute("SELECT * FROM EXA_RUST_TEST LIMIT 2001;")
-            .unwrap();
-
-        let result_set = ResultSet::try_from(result).unwrap().deserialize();
-        for row in result_set {
-            let record: (String, String, u16) = row.unwrap();
-            println!("{:?}", record);
-        }
-
-        use std::time::Instant;
-        let now = Instant::now();
-
-        let result = exa_con
-            .execute("SELECT 1 as col1, 2 as col2, 3 as col3 UNION ALL SELECT 4 as col1, 5 as col2, 6 as col3;")
-            .unwrap();
-
-        #[derive(Debug, Deserialize)]
-        struct Test {
-            col1: u8,
-            col2: u8,
-            col3: u8,
-        }
-
-        if let QueryResult::ResultSet(r) = result {
-            for row in r.deserialize::<Test>() {
-                let x = row.unwrap();
-                println!("{:?}", x);
-            }
-        }
-
-        println!("{}", now.elapsed().as_millis());
+        // let dsn = env::var("EXA_DSN").unwrap();
+        // let schema = env::var("EXA_SCHEMA").unwrap();
+        // let user = env::var("EXA_USER").unwrap();
+        // let password = env::var("EXA_PASSWORD").unwrap();
+        //
+        // let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+        // let result = exa_con
+        //     .execute("SELECT * FROM EXA_RUST_TEST LIMIT 2001;")
+        //     .unwrap();
+        //
+        // let result_set = ResultSet::try_from(result).unwrap().deserialize();
+        // for row in result_set {
+        //     let record: (String, String, u16) = row.unwrap();
+        //     println!("{:?}", record);
+        // }
+        //
+        // use std::time::Instant;
+        // let now = Instant::now();
+        //
+        // let result = exa_con
+        //     .execute("SELECT 1 as col1, 2 as col2, 3 as col3 UNION ALL SELECT 4 as col1, 5 as col2, 6 as col3;")
+        //     .unwrap();
+        //
+        // #[derive(Debug, Deserialize)]
+        // struct Test {
+        //     col1: u8,
+        //     col2: u8,
+        //     col3: u8,
+        // }
+        //
+        // if let QueryResult::ResultSet(r) = result {
+        //     for row in r.deserialize::<Test>() {
+        //         let x = row.unwrap();
+        //         println!("{:?}", x);
+        //     }
+        // }
+        //
+        // println!("{}", now.elapsed().as_millis());
     }
 }

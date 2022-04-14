@@ -1,17 +1,20 @@
 use crate::error::HttpTransportError;
 use crossbeam::queue::ArrayQueue;
-use csv::{ByteRecord, Reader, WriterBuilder};
+use csv::{Reader, WriterBuilder};
 #[cfg(feature = "native-tls")]
 use native_tls::{Identity, TlsAcceptor, TlsStream};
+#[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rcgen::{Certificate, CertificateParams, KeyPair, PKCS_RSA_SHA256};
+#[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rsa::pkcs1::LineEnding;
+#[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rsa::pkcs8::EncodePrivateKey;
+#[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rsa::RsaPrivateKey;
 #[cfg(feature = "rustls")]
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +22,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Barrier};
 use tungstenite::stream::NoDelay;
 
+/// Convenience alias
 type HttpResult<T> = std::result::Result<T, HttpTransportError>;
 
 /// Special Exasol packet that enables tunneling.
@@ -116,7 +120,7 @@ where
         let mut hex_len = String::new();
         reader.read_line(&mut hex_len)?;
 
-        match hex_len.len() == 0 {
+        match hex_len.is_empty() {
             true => Ok(0),
             false => usize::from_str_radix(hex_len.trim_end(), 16)
                 .map_err(HttpTransportError::ChunkSizeError),
@@ -138,7 +142,8 @@ where
             false => Err(HttpTransportError::DelimiterError),
         }?;
 
-        Ok(buf.extend(tmp_buf))
+        buf.extend(tmp_buf);
+        Ok(())
     }
 }
 
@@ -229,12 +234,16 @@ pub(crate) trait HttpTransport {
         barrier: Arc<Barrier>,
         run: Arc<AtomicBool>,
         mut addr_sender: Sender<String>,
-    ) -> HttpResult<()> where
+    ) -> HttpResult<()>
+    where
         A: ToSocketAddrs,
     {
         Self::initialize(server_addr, &mut addr_sender)
             .and_then(|stream| self.do_transport(stream, barrier, &run))
-            .map_err(|e| {run.store(false, Ordering::Release); e})
+            .map_err(|e| {
+                run.store(false, Ordering::Release);
+                e
+            })
     }
 
     fn do_transport(
@@ -264,7 +273,7 @@ pub(crate) trait HttpTransport {
 
     fn promote_stream(stream: TcpStream) -> HttpResult<MaybeTlsStream> {
         #[cfg(any(feature = "rustls", feature = "native-tls"))]
-        let cert = make_cert()?;
+        let cert = Self::make_cert()?;
 
         #[cfg(feature = "native-tls")]
         return Self::get_native_tls_stream(stream, cert);
@@ -279,10 +288,7 @@ pub(crate) trait HttpTransport {
     /// gets an internal Exasol address for HTTP transport,
     /// sends the address back to the parent thread
     /// and returns the [TcpStream] for further use.
-    fn initialize<A>(
-        server_addr: A,
-        addr_sender: &mut Sender<String>,
-    ) -> HttpResult<TcpStream>
+    fn initialize<A>(server_addr: A, addr_sender: &mut Sender<String>) -> HttpResult<TcpStream>
     where
         A: ToSocketAddrs,
     {
@@ -322,6 +328,24 @@ pub(crate) trait HttpTransport {
         }
         Ok(())
     }
+
+    #[cfg(any(feature = "rustls", feature = "native-tls"))]
+    fn make_cert() -> HttpResult<Certificate> {
+        let mut params = CertificateParams::default();
+        params.alg = &PKCS_RSA_SHA256;
+        params.key_pair = Some(make_rsa_keypair()?);
+        Ok(Certificate::from_params(params)?)
+    }
+
+    #[cfg(any(feature = "rustls", feature = "native-tls"))]
+    fn make_rsa_keypair() -> HttpResult<KeyPair> {
+        let mut rng = rand::thread_rng();
+        let bits = 2048;
+        let private_key = RsaPrivateKey::new(&mut rng, bits)?;
+        let key = private_key.to_pkcs8_pem(LineEnding::CRLF)?;
+        Ok(KeyPair::from_pem(&key)?)
+    }
+
     #[cfg(feature = "native-tls")]
     fn get_native_tls_stream(socket: TcpStream, cert: Certificate) -> HttpResult<MaybeTlsStream> {
         let tls_cert = cert.serialize_pem()?;
@@ -350,19 +374,4 @@ pub(crate) trait HttpTransport {
 
         Ok(MaybeTlsStream::Rustls(stream))
     }
-}
-
-fn make_cert() -> HttpResult<Certificate> {
-    let mut params = CertificateParams::default();
-    params.alg = &PKCS_RSA_SHA256;
-    params.key_pair = Some(make_rsa_keypair()?);
-    Ok(Certificate::from_params(params)?)
-}
-
-fn make_rsa_keypair() -> HttpResult<KeyPair> {
-    let mut rng = rand::thread_rng();
-    let bits = 2048;
-    let private_key = RsaPrivateKey::new(&mut rng, bits)?;
-    let key = private_key.to_pkcs8_pem(LineEnding::CRLF)?;
-    Ok(KeyPair::from_pem(&key)?)
 }

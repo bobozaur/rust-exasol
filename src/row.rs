@@ -9,99 +9,8 @@ use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-// Convenience alias
+/// Convenience alias
 type DataResult<T> = std::result::Result<T, DataError>;
-
-#[test]
-#[allow(dead_code)]
-fn deser_row() {
-    use serde_json::json;
-    use std::collections::HashMap;
-
-    let json_data = json!([
-        {
-           "dataType":{
-              "size": 10,
-              "type":"VARCHAR"
-           },
-           "name":"col1"
-        },
-        {
-           "dataType":{
-              "size": 10,
-              "type":"VARCHAR"
-           },
-           "name":"col2"
-        }
-    ]
-    );
-
-    let columns: Vec<Column> = serde_json::from_value(json_data).unwrap();
-
-    let data = json!(["val1", "val2"]);
-    let data1 = data.as_array().unwrap().clone();
-    let data2 = data.as_array().unwrap().clone();
-    let data3 = data.as_array().unwrap().clone();
-    let data4 = data.as_array().unwrap().clone();
-    let data5 = data.as_array().unwrap().clone();
-
-    let row1 = Row::new(data1, &columns);
-    let row2 = Row::new(data2, &columns);
-    let row3 = Row::new(data3, &columns);
-    let row4 = Row::new(data4, &columns);
-    let row5 = Row::new(data5, &columns);
-
-    #[derive(Deserialize)]
-    struct SomeRow1(String, String);
-
-    #[derive(Deserialize)]
-    struct SomeRow2 {
-        col1: String,
-        col2: String,
-    }
-
-    #[derive(Deserialize)]
-    struct SomeRow3 {
-        #[serde(flatten)]
-        map: HashMap<String, Value>,
-    }
-
-    // Row variant can be chosen through internal tagging
-    #[derive(Deserialize)]
-    #[serde(tag = "col1", rename_all = "lowercase")]
-    enum SomeRow4 {
-        Val2 { col2: String },
-        Val1 { col2: String },
-    }
-
-    // Untagged deserialization can also be employed
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum SomeRow5 {
-        // This variant won't be chosen due to data type,
-        // but struct variants are perfectly fine, they just need
-        // the custom deserialization mechanism
-        #[serde(deserialize_with = "deserialize_as_seq")]
-        SomeVar1(u8, u8),
-        // commenting the line below results in an error when trying to
-        // deserialize this variant, so the third variant will be attempted
-        #[serde(deserialize_with = "deserialize_as_seq")]
-        SomeVar2(SomeRow1),
-        // Struct variants are map-like, so they can be deserialized right away
-        SomeVar3 {
-            col1: String,
-            col2: String,
-        },
-        // And so can variants of a struct type, but the one above has order precedence
-        SomeVar4(SomeRow2),
-    }
-
-    SomeRow1::deserialize(row1).unwrap();
-    SomeRow2::deserialize(row2).unwrap();
-    SomeRow3::deserialize(row3).unwrap();
-    SomeRow4::deserialize(row4).unwrap();
-    SomeRow5::deserialize(row5).unwrap();
-}
 
 /// Struct representing a result set row.
 /// This is only used internally to further deserialize it into a given Rust type.
@@ -236,7 +145,7 @@ impl<'de> MapAccess<'de> for RowMapDeserializer<'de> {
         match self.columns.next() {
             Some(key) => {
                 let key_de = MapKeyDeserializer {
-                    key: Cow::Borrowed(&key.name),
+                    key: Cow::Borrowed(key.name()),
                 };
                 seed.deserialize(key_de).map(Some)
             }
@@ -329,57 +238,6 @@ impl<'de> serde::de::Deserializer<'de> for BorrowedCowStrDeserializer<'de> {
         bytes byte_buf option unit unit_struct newtype_struct seq tuple
         tuple_struct map struct enum identifier ignored_any
     }
-}
-
-#[test]
-fn col_major_seq_data() {
-    use serde_json::json;
-
-    #[derive(Clone, Serialize)]
-    struct SomeRow(String, String);
-
-    let row = SomeRow("val1".to_owned(), "val2".to_owned());
-    let row_major_data = vec![row.clone(), row.clone(), row.clone()];
-
-    let columns = &["col1", "col2"];
-    let col_major_data = to_col_major(columns, row_major_data).unwrap();
-
-    assert_eq!(
-        json!(col_major_data),
-        json!(vec![
-            vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()],
-            vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()]
-        ])
-    );
-}
-
-#[test]
-fn col_major_map_data() {
-    use serde_json::json;
-
-    #[derive(Clone, Serialize)]
-    struct SomeRow {
-        col1: String,
-        col2: String,
-    }
-
-    let row = SomeRow {
-        col1: "val1".to_owned(),
-        col2: "val2".to_owned(),
-    };
-
-    let row_major_data = vec![row.clone(), row.clone(), row.clone()];
-
-    let columns = &["col2", "col1"];
-    let col_major_data = to_col_major(columns, row_major_data).unwrap();
-
-    assert_eq!(
-        json!(col_major_data),
-        json!(vec![
-            vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()],
-            vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()],
-        ])
-    );
 }
 
 /// Function used to transpose data from an iterator or serializable types,
@@ -637,4 +495,151 @@ where
         }
     }
     deserializer.deserialize_map(SequenceVisitor(PhantomData))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn col_major_seq_data() {
+        use serde_json::json;
+
+        #[derive(Clone, Serialize)]
+        struct SomeRow(String, String);
+
+        let row = SomeRow("val1".to_owned(), "val2".to_owned());
+        let row_major_data = vec![row.clone(), row.clone(), row.clone()];
+
+        let columns = &["col1", "col2"];
+        let col_major_data = to_col_major(columns, row_major_data).unwrap();
+
+        assert_eq!(
+            json!(col_major_data),
+            json!(vec![
+                vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()],
+                vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()]
+            ])
+        );
+    }
+
+    #[test]
+    fn col_major_map_data() {
+        use serde_json::json;
+
+        #[derive(Clone, Serialize)]
+        struct SomeRow {
+            col1: String,
+            col2: String,
+        }
+
+        let row = SomeRow {
+            col1: "val1".to_owned(),
+            col2: "val2".to_owned(),
+        };
+
+        let row_major_data = vec![row.clone(), row.clone(), row.clone()];
+
+        let columns = &["col2", "col1"];
+        let col_major_data = to_col_major(columns, row_major_data).unwrap();
+
+        assert_eq!(
+            json!(col_major_data),
+            json!(vec![
+                vec!["val2".to_owned(), "val2".to_owned(), "val2".to_owned()],
+                vec!["val1".to_owned(), "val1".to_owned(), "val1".to_owned()],
+            ])
+        );
+    }
+
+    #[test]
+    #[allow(unused)]
+    fn deser_row() {
+        use serde_json::json;
+        use std::collections::HashMap;
+
+        let json_data = json!([
+            {
+               "dataType":{
+                  "size": 10,
+                  "type":"VARCHAR"
+               },
+               "name":"col1"
+            },
+            {
+               "dataType":{
+                  "size": 10,
+                  "type":"VARCHAR"
+               },
+               "name":"col2"
+            }
+        ]
+        );
+
+        let columns: Vec<Column> = serde_json::from_value(json_data).unwrap();
+
+        let data = json!(["val1", "val2"]);
+        let data1 = data.as_array().unwrap().clone();
+        let data2 = data.as_array().unwrap().clone();
+        let data3 = data.as_array().unwrap().clone();
+        let data4 = data.as_array().unwrap().clone();
+        let data5 = data.as_array().unwrap().clone();
+
+        let row1 = Row::new(data1, &columns);
+        let row2 = Row::new(data2, &columns);
+        let row3 = Row::new(data3, &columns);
+        let row4 = Row::new(data4, &columns);
+        let row5 = Row::new(data5, &columns);
+
+        #[derive(Deserialize)]
+        struct SomeRow1(String, String);
+
+        #[derive(Deserialize)]
+        struct SomeRow2 {
+            col1: String,
+            col2: String,
+        }
+
+        #[derive(Deserialize)]
+        struct SomeRow3 {
+            #[serde(flatten)]
+            map: HashMap<String, Value>,
+        }
+
+        // Row variant can be chosen through internal tagging
+        #[derive(Deserialize)]
+        #[serde(tag = "col1", rename_all = "lowercase")]
+        enum SomeRow4 {
+            Val2 { col2: String },
+            Val1 { col2: String },
+        }
+
+        // Untagged deserialization can also be employed
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum SomeRow5 {
+            // This variant won't be chosen due to data type,
+            // but struct variants are perfectly fine, they just need
+            // the custom deserialization mechanism
+            #[serde(deserialize_with = "deserialize_as_seq")]
+            SomeVar1(u8, u8),
+            // commenting the line below results in an error when trying to
+            // deserialize this variant, so the third variant will be attempted
+            #[serde(deserialize_with = "deserialize_as_seq")]
+            SomeVar2(SomeRow1),
+            // Struct variants are map-like, so they can be deserialized right away
+            SomeVar3 {
+                col1: String,
+                col2: String,
+            },
+            // And so can variants of a struct type, but the one above has order precedence
+            SomeVar4(SomeRow2),
+        }
+
+        SomeRow1::deserialize(row1).unwrap();
+        SomeRow2::deserialize(row2).unwrap();
+        SomeRow3::deserialize(row3).unwrap();
+        SomeRow4::deserialize(row4).unwrap();
+        SomeRow5::deserialize(row5).unwrap();
+    }
 }

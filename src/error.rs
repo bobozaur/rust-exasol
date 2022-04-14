@@ -1,4 +1,4 @@
-use crate::response::{Attributes, ExaError, Response, ResponseData};
+use crate::response::ExaError;
 use rsa;
 use serde_json;
 use std::array::TryFromSliceError;
@@ -33,13 +33,13 @@ pub enum DriverError {
     #[error(transparent)]
     DataError(#[from] DataError),
     #[error(transparent)]
-    ConversionError(#[from] ConversionError),
-    #[error(transparent)]
     RequestError(#[from] RequestError),
     #[error(transparent)]
     ConnectionError(#[from] ConnectionError),
     #[error(transparent)]
     HttpTransportError(#[from] HttpTransportError),
+    #[error("Response does not contain {0}")]
+    ResponseMismatch(&'static str),
 }
 
 #[derive(Debug, ThisError)]
@@ -65,15 +65,6 @@ pub enum DataError {
     TypeParseError(#[from] serde_json::error::Error),
 }
 
-/// Conversion errors from [QueryResult](crate::query::QueryResult) to its variants.
-#[derive(Debug, ThisError)]
-pub enum ConversionError {
-    #[error("Not a result set")]
-    ResultSetError,
-    #[error("Not a row count")]
-    RowCountError,
-}
-
 /// Request related errors
 #[derive(Debug, ThisError)]
 pub enum RequestError {
@@ -85,8 +76,6 @@ pub enum RequestError {
     CompressionError(#[from] std::io::Error),
     #[error("Cannot fetch rows chunk - missing statement handle")]
     MissingHandleError,
-    #[error("Response does not contain {0}")]
-    InvalidResponse(&'static str),
 }
 
 /// Connection related errors
@@ -115,8 +104,6 @@ pub enum HttpTransportError {
     RsaError(#[from] rsa::errors::Error),
     #[error(transparent)]
     PKCS8Error(#[from] rsa::pkcs8::Error),
-    #[error(transparent)]
-    CertificateError(#[from] rcgen::RcgenError),
     #[cfg(feature = "native-tls")]
     #[error(transparent)]
     NativeTlsError(#[from] native_tls::Error),
@@ -141,4 +128,7 @@ pub enum HttpTransportError {
     ThreadError,
     #[error("Could not extract socket out of CSV writer")]
     CsvSocketError,
+    #[cfg(any(feature = "rcgen"))]
+    #[error(transparent)]
+    CertificateError(#[from] rcgen::RcgenError),
 }

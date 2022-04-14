@@ -1,36 +1,31 @@
-use lazy_regex::regex;
-use regex::Captures;
-use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fmt::{Debug, Display, Formatter};
-use std::fs::OpenOptions;
-use std::net::TcpStream;
-use std::rc::Rc;
-
-use rsa::{pkcs1::DecodeRsaPublicKey, RsaPublicKey};
-use serde::Serialize;
-use serde_json::{json, Value};
-use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
-use url::Url;
+#[cfg(feature = "flate2")]
+use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+use std::borrow::BorrowMut;
+#[cfg(feature = "flate2")]
+use std::io::Write;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, DriverError, HttpTransportError, RequestError, Result};
 use crate::http_transport::{HttpExportThread, HttpTransport};
-use crate::query::{PreparedStatement, QueryResult};
-use crate::response::{Attributes, Response, ResponseData};
-use crate::ResultSet;
-#[cfg(feature = "flate2")]
-use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
+use crate::query::{QueryResult, ResultSetIter};
+use crate::response::{Attributes, PreparedStatement, Response, ResponseData};
+use crate::row::to_col_major;
+use lazy_regex::regex;
+use regex::Captures;
+use rsa::{pkcs1::DecodeRsaPublicKey, RsaPublicKey};
 use serde::de::DeserializeOwned;
-#[cfg(feature = "flate2")]
-use std::io::Write;
-use std::io::Write;
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
+use std::fmt::{Debug, Display, Formatter};
+use std::net::TcpStream;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvError, Sender};
 use std::sync::{mpsc, Arc, Barrier};
 use std::thread;
+use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
+use url::Url;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
@@ -60,21 +55,69 @@ pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Co
 }
 
 /// The [Connection] struct will be what we use to interact with the database.
-// A Rc<RefCell> is being used internally so that the connection can be shared
-// with all the result sets retrieved (needed for fetching row chunks).
+#[doc(hidden)]
 pub struct Connection {
-    con: Rc<RefCell<ConnectionImpl>>,
+    pub(crate) driver_attr: DriverAttributes,
+    exa_attr: HashMap<String, Value>,
+    ws: WebSocket<MaybeTlsStream<TcpStream>>,
+    rs_handles: HashSet<u16>,
+    ps_handles: HashSet<u16>,
+    send: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>, Value) -> ReqResult<()>,
+    recv: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response>,
+}
+
+impl Drop for Connection {
+    /// Implementing drop to properly get rid of the connection and its components
+    #[allow(unused)]
+    fn drop(&mut self) {
+        // Closes result sets and prepared statements
+        let ps_handles = std::mem::take(self.rs_handles.borrow_mut());
+
+        self.close_results_impl(ps_handles);
+        std::mem::take(&mut self.ps_handles)
+            .into_iter()
+            .for_each(|h| drop(self.close_prepared_stmt_impl(h)));
+
+        // Closing session on Exasol side
+        self.do_request(json!({"command": "disconnect"}));
+
+        // Sending Message::Close frame
+        self.ws.close(None);
+
+        // Reading the response sent by the server until Error:ConnectionClosed occurs.
+        // We should typically get a Message::Close frame and then the error.
+        while self.ws.read_message().is_ok() {}
+
+        // It is now safe to drop the socket
+    }
 }
 
 impl Debug for Connection {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.con.borrow())
+        let str_attr = self
+            .exa_attr
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k, v))
+            .collect::<Vec<String>>()
+            .join("\n");
+        write!(
+            f,
+            "active: {}\n{}\n{}",
+            self.ws.can_write(),
+            str_attr,
+            self.driver_attr
+        )
     }
 }
 
 impl Connection {
     /// Creates the [Connection] using the provided [ConOpts].
+    /// If a range is provided as DSN, connection attempts are made for max each possible
+    /// options, until one is successful.
     ///
+    /// # Errors
+    /// If all options were exhausted and a connection could not be established
+    /// an error is returned.
     /// ```
     /// use std::env;
     /// use exasol::{ConOpts, Connection};
@@ -92,243 +135,33 @@ impl Connection {
     ///
     /// let mut exa_con = Connection::new(opts).unwrap();
     /// ```
-    #[inline]
     pub fn new(opts: ConOpts) -> Result<Connection> {
-        Ok(Connection {
-            con: Rc::new(RefCell::new(ConnectionImpl::new(opts)?)),
-        })
-    }
+        let (ws, addr) =
+            Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
 
-    /// Sends a query to the database and waits for the result.
-    /// Returns a [QueryResult]
-    ///
-    /// ```
-    /// # use exasol::{connect, QueryResult};
-    /// # use exasol::error::Result;
-    /// # use serde_json::Value;
-    /// # use std::env;
-    /// #
-    /// # let dsn = env::var("EXA_DSN").unwrap();
-    /// # let schema = env::var("EXA_SCHEMA").unwrap();
-    /// # let user = env::var("EXA_USER").unwrap();
-    /// # let password = env::var("EXA_PASSWORD").unwrap();
-    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
-    ///
-    /// if let QueryResult::ResultSet(r) = result {
-    ///     let x = r.collect::<Result<Vec<Vec<Value>>>>();
-    ///         if let Ok(v) = x {
-    ///             for row in v.iter() {
-    ///                 // do stuff
-    ///             }
-    ///         }
-    ///     }
-    /// ```
-    #[inline]
-    pub fn execute<T>(&mut self, query: T) -> Result<QueryResult>
-    where
-        T: AsRef<str> + Serialize,
-    {
-        (*self.con).borrow_mut().execute(&self.con, &query)
-    }
-    /// ```
-    /// # use exasol::{connect, QueryResult};
-    /// # use exasol::error::Result;
-    /// # use serde_json::Value;
-    /// # use std::env;
-    /// #
-    /// # let dsn = env::var("EXA_DSN").unwrap();
-    /// # let schema = env::var("EXA_SCHEMA").unwrap();
-    /// # let user = env::var("EXA_USER").unwrap();
-    /// # let password = env::var("EXA_PASSWORD").unwrap();
-    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result = exa_con.export("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
-    ///
-    /// result.into_iter().take(5).for_each(|v: (String, String, u32)| println!("{:?}", v))
-    /// ```
-    pub fn export<T, R>(&mut self, query: T) -> Result<Vec<R>>
-    where
-        T: AsRef<str> + Serialize,
-        R: DeserializeOwned + Send + 'static,
-    {
-        (*self.con).borrow_mut().export(&self.con, 1)
-    }
+        let exa_attr = HashMap::new();
+        let rs_handles = HashSet::new();
+        let ps_handles = HashSet::new();
 
-    /// Convenience method that executes a query and always attempts
-    /// to return a [ResultSet] to be iterated over.
-    /// The method will also automatically deserialize the [ResultSet]
-    /// into the given generic row type.
-    ///
-    /// # Errors
-    /// Apart from regular errors, this method can also return an error if the
-    /// [QueryResult] is not the [ResultSet] variant, as conversion would fail.
-    ///
-    /// ```
-    /// # use exasol::{connect, QueryResult};
-    /// # use exasol::error::Result;
-    /// # use serde_json::Value;
-    /// # use std::env;
-    /// #
-    /// # let dsn = env::var("EXA_DSN").unwrap();
-    /// # let schema = env::var("EXA_SCHEMA").unwrap();
-    /// # let user = env::var("EXA_USER").unwrap();
-    /// # let password = env::var("EXA_PASSWORD").unwrap();
-    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result_set = exa_con.execute_and_iter("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
-    ///
-    /// // Notice that the row type has to be given at some point,
-    /// // either in the actual method or in the row itself, letting type
-    /// // inference to work its magic
-    /// for result in result_set {
-    ///     let row: (u8, u8) = result.unwrap();
-    /// }
-    /// ```
-    #[inline]
-    pub fn execute_and_iter<R, T>(&mut self, query: T) -> Result<ResultSet<R>>
-    where
-        T: AsRef<str> + Serialize,
-        R: DeserializeOwned,
-    {
-        (*self.con)
-            .borrow_mut()
-            .execute(&self.con, &query)
-            .and_then(|q| {
-                ResultSet::try_from(q)
-                    .map_err(From::from)
-                    .map(|r| r.deserialize())
-            })
-    }
+        let driver_attr = DriverAttributes {
+            server_addr: addr,
+            fetch_size: opts.fetch_size(),
+            lowercase_columns: opts.lowercase_columns(),
+        };
 
-    /// Sends multiple queries to the database and waits for the result.
-    /// Returns a [Vec<QueryResult>].
-    ///
-    /// ```
-    /// # use exasol::{connect, QueryResult};
-    /// # use exasol::error::Result;
-    /// # use std::env;
-    /// #
-    /// # let dsn = env::var("EXA_DSN").unwrap();
-    /// # let schema = env::var("EXA_SCHEMA").unwrap();
-    /// # let user = env::var("EXA_USER").unwrap();
-    /// # let password = env::var("EXA_PASSWORD").unwrap();
-    /// #
-    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let queries = vec!["SELECT 3", "SELECT 4"];
-    /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
-    /// let queries = vec!["SELECT 3", "DELETE * FROM EXA_RUST_TEST WHERE 1=2"];
-    /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
-    /// ```
-    #[inline]
-    pub fn execute_batch<T>(&mut self, queries: &[T]) -> Result<Vec<QueryResult>>
-    where
-        T: AsRef<str> + Serialize,
-    {
-        (*self.con).borrow_mut().execute_batch(&self.con, queries)
-    }
+        let mut con = Self {
+            driver_attr,
+            exa_attr,
+            rs_handles,
+            ps_handles,
+            ws,
+            send,
+            recv,
+        };
 
-    /// Creates a prepared statement of type [PreparedStatement].
-    /// The prepared statement can then be executed with the provided data.
-    ///
-    /// Named parameters are supported to aid in using map-like types as data rows
-    /// when executing the prepared statement. Using just `?` results in the parameter name
-    /// being the empty string.
-    ///
-    /// Since a map-like type implies no duplicate keys, duplicate named parameters
-    /// are not supported and will result in errors when the [PreparedStatement] is executed.
-    ///
-    /// For sequence-like types, parameter names are ignored and discarded.
-    ///
-    /// ```
-    /// use exasol::{connect, QueryResult, PreparedStatement};
-    /// use exasol::error::Result;
-    /// use serde_json::json;
-    /// use std::env;
-    ///
-    /// let dsn = env::var("EXA_DSN").unwrap();
-    /// let schema = env::var("EXA_SCHEMA").unwrap();
-    /// let user = env::var("EXA_USER").unwrap();
-    /// let password = env::var("EXA_PASSWORD").unwrap();
-    ///
-    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let prepared_stmt: PreparedStatement = exa_con.prepare("SELECT 1 FROM (SELECT 1) TMP WHERE 1 = ?").unwrap();
-    /// let data = vec![vec![json!(1)]];
-    /// prepared_stmt.execute(&data).unwrap();
-    /// ```
-    ///
-    /// ```
-    /// use exasol::{connect, QueryResult, PreparedStatement};
-    /// use exasol::error::Result;
-    /// use serde_json::json;
-    /// use serde::Serialize;
-    /// use std::env;
-    ///
-    /// let dsn = env::var("EXA_DSN").unwrap();
-    /// let schema = env::var("EXA_SCHEMA").unwrap();
-    /// let user = env::var("EXA_USER").unwrap();
-    /// let password = env::var("EXA_PASSWORD").unwrap();
-    ///
-    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let prepared_stmt: PreparedStatement = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?col1, ?col2, ?col3)").unwrap();
-    ///
-    /// #[derive(Serialize, Clone)]
-    /// struct Data {
-    ///    col1: String,
-    ///    col2: String,
-    ///    col3: u8
-    /// }
-    ///
-    /// let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
-    /// let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
-    ///
-    /// prepared_stmt.execute(vec_data).unwrap();
-    /// ```
-    ///
-    /// String literals resembling a parameter can be escaped, if needed:
-    ///
-    /// ```
-    /// # use exasol::{connect, QueryResult, PreparedStatement};
-    /// # use exasol::error::Result;
-    /// # use serde_json::json;
-    /// # use std::env;
-    /// #
-    /// # let dsn = env::var("EXA_DSN").unwrap();
-    /// # let schema = env::var("EXA_SCHEMA").unwrap();
-    /// # let user = env::var("EXA_USER").unwrap();
-    /// # let password = env::var("EXA_PASSWORD").unwrap();
-    /// #
-    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let prepared_stmt: PreparedStatement = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES('\\?col1', ?col2, ?col3)").unwrap();
-    /// let data = vec![json!(["test", 1])];
-    /// prepared_stmt.execute(&data).unwrap();
-    /// ```
-    #[inline]
-    pub fn prepare<'a, T>(&mut self, query: T) -> Result<PreparedStatement>
-    where
-        T: Serialize + Into<Cow<'a, str>>,
-    {
-        (*self.con).borrow_mut().prepare(&self.con, query)
-    }
-
-    /// Ping the server and wait for a Pong frame
-    ///
-    /// ```
-    /// # use exasol::connect;
-    /// # use std::env;
-    /// #
-    /// # let dsn = env::var("EXA_DSN").unwrap();
-    /// # let schema = env::var("EXA_SCHEMA").unwrap();
-    /// # let user = env::var("EXA_USER").unwrap();
-    /// # let password = env::var("EXA_PASSWORD").unwrap();
-    /// #
-    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// exa_con.ping().unwrap();
-    /// ```
-    #[inline]
-    pub fn ping(&mut self) -> Result<()> {
-        Ok((*self.con)
-            .borrow_mut()
-            .ping()
-            .map_err(DriverError::RequestError)?)
+        con.login(opts)?;
+        con.get_attributes()?;
+        Ok(con)
     }
 
     /// Sets the fetch size in bytes when retrieving [ResultSet](crate::query::ResultSet) chunks
@@ -348,7 +181,7 @@ impl Connection {
     /// ```
     #[inline]
     pub fn set_fetch_size(&mut self, val: u32) {
-        (*self.con).borrow_mut().driver_attr.fetch_size = val;
+        self.driver_attr.fetch_size = val;
     }
 
     /// Sets whether the [ResultSet](crate::query::ResultSet) [Column](crate::response::Column)
@@ -368,10 +201,12 @@ impl Connection {
     /// ```
     #[inline]
     pub fn set_lowercase_columns(&mut self, flag: bool) {
-        (*self.con).borrow_mut().driver_attr.lowercase_columns = flag;
+        self.driver_attr.lowercase_columns = flag;
     }
 
-    /// Sets autocommit mode On or Off
+    /// Sets autocommit mode On or Off. The default is On.
+    /// Turning it off means transaction mode is enabled and explicit `COMMIT` or `ROLLBACK`
+    /// statements have to be executed.
     ///
     /// ```
     /// # use exasol::connect;
@@ -431,127 +266,138 @@ impl Connection {
         self.set_attributes(payload)
     }
 
-    /// Sets connection attributes
-    #[inline]
-    fn set_attributes(&mut self, attr: Value) -> Result<()> {
-        (*self.con).borrow_mut().set_attributes(attr)
-    }
-}
-
-/// Connection implementation.
-/// This requires a wrapper so that the interior mutability pattern can be used
-/// for sharing the connection in multiple [ResultSet] and [PreparedStatement] structs.
-/// They need to own it so that they can use it to further interact with the database
-/// for row fetching or query execution.
-#[doc(hidden)]
-pub(crate) struct ConnectionImpl {
-    pub(crate) driver_attr: DriverAttributes,
-    exa_attr: HashMap<String, Value>,
-    ws: WebSocket<MaybeTlsStream<TcpStream>>,
-    send: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>, Value) -> ReqResult<()>,
-    recv: fn(&mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<Response>,
-}
-
-impl Drop for ConnectionImpl {
-    /// Implementing drop to properly get rid of the connection and its components
-    #[allow(unused)]
-    fn drop(&mut self) {
-        // Closing session on Exasol side
-        self.do_request(json!({"command": "disconnect"}));
-
-        // Sending Message::Close frame
-        self.ws.close(None);
-
-        // Reading the response sent by the server until Error:ConnectionClosed occurs.
-        // We should typically get a Message::Close frame and then the error.
-        while self.ws.read_message().is_ok() {}
-
-        // It is now safe to drop the socket
-    }
-}
-
-impl Debug for ConnectionImpl {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let str_attr = self
-            .exa_attr
-            .iter()
-            .map(|(k, v)| format!("{}: {}", k, v))
-            .collect::<Vec<String>>()
-            .join("\n");
-        write!(
-            f,
-            "active: {}\n{}\n{}",
-            self.ws.can_write(),
-            str_attr,
-            self.driver_attr
-        )
-    }
-}
-
-impl ConnectionImpl {
-    /// Attempts to create the websocket, authenticate in Exasol
-    /// and read the connection attributes afterwards.
+    /// Sends a query to the database and waits for the result.
+    /// Returns a [QueryResult]
     ///
-    /// We'll get the list of IP addresses resulted from parsing and resolving the DSN
-    /// Then loop through all of them (max once each) until a connection is established.
-    /// Login is attempted afterwards.
-    ///
-    /// If all options were exhausted and a connection could not be established
-    /// an error is returned.
-    pub(crate) fn new(opts: ConOpts) -> Result<ConnectionImpl> {
-        let (ws, addr) =
-            Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
-        let exa_attr = HashMap::new();
-
-        let driver_attr = DriverAttributes {
-            server_addr: addr,
-            fetch_size: opts.fetch_size(),
-            lowercase_columns: opts.lowercase_columns(),
-        };
-
-        let mut con = Self {
-            driver_attr,
-            exa_attr,
-            ws,
-            send,
-            recv,
-        };
-
-        con.login(opts)?;
-        con.get_attributes()?;
-        Ok(con)
-    }
-
-    /// Sends an setAttributes request to Exasol
-    /// And calls get_attributes for consistency
-    pub(crate) fn set_attributes(&mut self, attrs: Value) -> Result<()> {
-        let payload = json!({"command": "setAttributes", "attributes": attrs});
-        self.do_request(payload)?;
-        self.get_attributes()?;
-        Ok(())
-    }
-
-    /// Sends the payload to Exasol to execute one query
-    /// and retrieves the first element from the resulted Vec<QueryResult>
-    pub(crate) fn execute<T>(
-        &mut self,
-        con_impl: &Rc<RefCell<ConnectionImpl>>,
-        query: &T,
-    ) -> Result<QueryResult>
+    /// ```
+    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use serde_json::Value;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
+    /// ```
+    pub fn execute<T>(&mut self, query: T) -> Result<QueryResult>
     where
         T: AsRef<str> + Serialize,
     {
         let payload = json!({"command": "execute", "sqlText": query});
-        self.exec_with_one_result(con_impl, payload)
+        self.exec_with_one_result(payload)
     }
 
-    pub(crate) fn export<T>(
+    /// Sends multiple queries to the database and waits for their results.
+    /// Returns a [Vec<QueryResult>].
+    ///
+    /// ```
+    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let queries = vec!["SELECT 3", "SELECT 4"];
+    /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
+    /// let queries = vec!["SELECT 3", "DELETE * FROM EXA_RUST_TEST WHERE 1 = 2"];
+    /// let results: Vec<QueryResult> = exa_con.execute_batch(&queries).unwrap();
+    /// ```
+    pub fn execute_batch<T>(&mut self, queries: &[T]) -> Result<Vec<QueryResult>>
+    where
+        T: AsRef<str> + Serialize,
+    {
+        let payload = json!({"command": "executeBatch", "sqlTexts": queries});
+        self.exec_with_results(payload)
+    }
+
+    /// For a given mutable reference of a [QueryResult],
+    /// return all rows if the query produced a [ResultSet].
+    /// Returns an empty `Vec` if there's no result set or it was all retrieved already.
+    /// Automatically closes the result set if it was fully retrieved.
+    /// ```
+    /// # use exasol::error::Result;
+    /// # use exasol::{connect, bind, QueryResult};
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
+    /// let data: Vec<Vec<String>> = exa_con.retrieve_rows(&mut result).unwrap();
+    /// assert_eq!(data.len(), 2);
+    /// ```
+    pub fn retrieve_rows<T: DeserializeOwned>(
         &mut self,
-        con_impl: &Rc<RefCell<ConnectionImpl>>,
-        num_threads: usize,
-    ) -> Result<Vec<T>>
+        result: &mut QueryResult,
+    ) -> Result<Vec<T>> {
+        result
+            .result_set_mut()
+            .map(|rs| ResultSetIter::new(rs, self).collect())
+            .unwrap_or(Ok(Vec::new()))
+    }
+
+    /// For a given mutable reference of a [QueryResult],
+    /// return at most n rows if the query produced a [ResultSet].
+    /// Returns an empty `Vec` if there's no result set or it was all retrieved already.
+    /// Automatically closes the result set if it was fully retrieved.
+    /// ```
+    /// # use exasol::error::Result;
+    /// # use exasol::{connect, bind, QueryResult};
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
+    /// let data: Vec<Vec<String>> = exa_con.retrieve_nrows(&mut result, 1).unwrap();
+    /// assert_eq!(data.len(), 1);
+    ///
+    /// // We're closing the underlying result set because we don't need it anymore.
+    /// exa_con.close_result(result).unwrap();
+    /// ```
+    pub fn retrieve_nrows<T: DeserializeOwned>(
+        &mut self,
+        result: &mut QueryResult,
+        n: usize,
+    ) -> Result<Vec<T>> {
+        result
+            .result_set_mut()
+            .map(|rs| ResultSetIter::new(rs, self).take(n).collect())
+            .unwrap_or(Ok(Vec::new()))
+    }
+
+    /// ```
+    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use serde_json::Value;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let result = exa_con.export("SELECT * FROM EXA_RUST_TEST LIMIT 1000", 1).unwrap();
+    ///
+    /// result.into_iter().take(5).for_each(|v: (String, String, u32)| println!("{:?}", v))
+    /// ```
+    pub fn export<Q, T>(&mut self, query: Q, num_threads: usize) -> Result<Vec<T>>
     where
         T: DeserializeOwned + Send + 'static,
+        Q: AsRef<str> + Serialize,
     {
         let barrier = Arc::new(Barrier::new(num_threads + 1));
         let run = Arc::new(AtomicBool::new(true));
@@ -570,17 +416,17 @@ impl ConnectionImpl {
                     let mut het = HttpExportThread::new(data_sender);
 
                     het.start(
-                        utils.server_addr,
+                        utils.server_addr.as_str(),
                         utils.barrier,
                         utils.run,
-                        utils.addr_sender
+                        utils.addr_sender,
                     )
                 }));
             }
             handles.push(thread::spawn(move || {
                 let mut het = HttpExportThread::new(data_sender);
                 het.start(
-                    utils.server_addr,
+                    utils.server_addr.as_str(),
                     utils.barrier,
                     utils.run,
                     utils.addr_sender,
@@ -616,7 +462,7 @@ impl ConnectionImpl {
 
         barrier.wait();
 
-        let query = format!("EXPORT EXA_LONG INTO CSV\n{}", hosts?);
+        let query = format!("EXPORT {} INTO CSV\n{}", query.as_ref(), hosts?);
         let payload = json!({"command": "execute", "sqlText": query});
         let query_res = self.do_request(payload);
 
@@ -628,94 +474,313 @@ impl ConnectionImpl {
             .and_then(|data| query_res.map(|_| data))
     }
 
-    /// Sends the payload to Exasol to execute multiple queries
-    /// and retrieves the results as a vector of QueryResult enums
-    pub(crate) fn execute_batch<T>(
-        &mut self,
-        con_impl: &Rc<RefCell<ConnectionImpl>>,
-        queries: &[T],
-    ) -> Result<Vec<QueryResult>>
+    /// Creates a prepared statement of type [PreparedStatement].
+    /// The prepared statement can then be executed with the provided data.
+    ///
+    /// Named parameters are supported to aid in using map-like types as data rows
+    /// when executing the prepared statement. Using just `?` results in the parameter name
+    /// being the empty string.
+    ///
+    /// Since a map-like type implies no duplicate keys, duplicate named parameters
+    /// are not supported and will result in errors when the [PreparedStatement] is executed.
+    ///
+    /// For sequence-like types, parameter names are ignored and discarded.
+    ///
+    /// ```
+    /// use exasol::{connect, QueryResult, PreparedStatement};
+    /// use exasol::error::Result;
+    /// use serde_json::json;
+    /// use std::env;
+    ///
+    /// let dsn = env::var("EXA_DSN").unwrap();
+    /// let schema = env::var("EXA_SCHEMA").unwrap();
+    /// let user = env::var("EXA_USER").unwrap();
+    /// let password = env::var("EXA_PASSWORD").unwrap();
+    ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let prepared_stmt = exa_con.prepare("SELECT 1 FROM (SELECT 1) TMP WHERE 1 = ?").unwrap();
+    ///
+    /// let data = vec![vec![json!(1)]];
+    /// exa_con.execute_prepared(&prepared_stmt, &data).unwrap();
+    ///
+    /// // Prepared statements should be closed once you're done with them:
+    /// exa_con.close_prepared_statement(prepared_stmt).unwrap();
+    /// ```
+    ///
+    /// ```
+    /// use exasol::{connect, QueryResult, PreparedStatement};
+    /// use exasol::error::Result;
+    /// use serde_json::json;
+    /// use serde::Serialize;
+    /// use std::env;
+    ///
+    /// let dsn = env::var("EXA_DSN").unwrap();
+    /// let schema = env::var("EXA_SCHEMA").unwrap();
+    /// let user = env::var("EXA_USER").unwrap();
+    /// let password = env::var("EXA_PASSWORD").unwrap();
+    ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let prepared_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?col1, ?col2, ?col3)").unwrap();
+    ///
+    /// #[derive(Serialize, Clone)]
+    /// struct Data {
+    ///    col1: String,
+    ///    col2: String,
+    ///    col3: u8
+    /// }
+    ///
+    /// let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
+    /// let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
+    ///
+    /// exa_con.execute_prepared(&prepared_stmt, vec_data).unwrap();
+    /// ```
+    ///
+    /// String literals resembling a parameter can be escaped, if needed:
+    ///
+    /// ```
+    /// # use exasol::{connect, QueryResult, PreparedStatement};
+    /// # use exasol::error::Result;
+    /// # use serde_json::json;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let prepared_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES('\\?col1', ?col2, ?col3)").unwrap();
+    /// let data = vec![json!(["test", 1])];
+    /// exa_con.execute_prepared(&prepared_stmt, &data).unwrap();
+    /// ```
+    pub fn prepare<T>(&mut self, query: T) -> Result<PreparedStatement>
     where
-        T: AsRef<str> + Serialize,
-    {
-        let payload = json!({"command": "executeBatch", "sqlTexts": queries});
-        self.exec_with_results(con_impl, payload)
-    }
-
-    /// Sends a request for execution and returns the first [QueryResult] received.
-    pub(crate) fn exec_with_one_result(
-        &mut self,
-        con_impl: &Rc<RefCell<ConnectionImpl>>,
-        payload: Value,
-    ) -> Result<QueryResult> {
-        self.exec_with_results(con_impl, payload)?
-            .pop()
-            .ok_or(DriverError::RequestError(RequestError::InvalidResponse("result sets")).into())
-    }
-
-    /// Creates a prepared statement
-    pub(crate) fn prepare<'a, T>(
-        &mut self,
-        con_impl: &Rc<RefCell<ConnectionImpl>>,
-        query: T,
-    ) -> Result<PreparedStatement>
-    where
-        T: Serialize + Into<Cow<'a, str>>,
+        T: Serialize + AsRef<str>,
     {
         let re = regex!(r"\\(\?\w*)|[?\w]\?\w*|\?\w*\?|\?(\w*)");
         let mut col_names = Vec::new();
-        let cow_q = query.into();
-        let x = cow_q.as_ref();
+        let str_query = query.as_ref();
 
-        let q = re.replace_all(x, |cap: &Captures| {
+        // This is similar to parameter binding, but uses ? instead of :
+        //
+        // Capture group 2 is Some when an actual parameter name is matched,
+        // in which case it needs to be stored as a column name.
+        // A simple question mark is returned to replace_all(),
+        // as this is just the driver's mechanism for accepting named parameters
+        // and Exasol has no clue about it.
+        //
+        // Capture group 1 is Some only when an escaped parameter construct
+        // is matched(e.g: "\?PARAM"). Returning the group gets rid of the escape question mark.
+        //
+        // Otherwise, capture group 0, AKA the entire match, is returned as-is,
+        // as it represents a regex match that we purposely ignore.
+        // It's safe to unwrap it because it wouldn't be there if there is no match.
+        let q = re.replace_all(str_query, |cap: &Captures| {
             cap.get(2)
                 .map(|m| {
                     col_names.push(m.as_str().to_owned());
                     "?"
                 })
-                .or_else(|| cap.get(1).map(|m| &x[m.range()]))
-                .unwrap_or(&x[cap.get(0).unwrap().range()])
+                .or_else(|| cap.get(1).map(|m| &str_query[m.range()]))
+                .unwrap_or(&str_query[cap.get(0).unwrap().range()])
         });
 
         let payload = json!({"command": "createPreparedStatement", "sqlText": q});
-        self.get_resp_data(payload)
-            .and_then(|r| r.try_to_prepared_stmt(con_impl, col_names))
+        let mut ps: PreparedStatement = self.get_resp_data(payload)?.try_into()?;
+        ps.update_param_names(col_names);
+        self.ps_handles.insert(ps.handle());
+        Ok(ps)
     }
 
-    /// Closes a result set
-    #[inline]
-    pub(crate) fn close_result_set(&mut self, handle: u16) -> Result<()> {
-        let payload = json!({"command": "closeResultSet", "resultSetHandles": [handle]});
-        self.do_request(payload)?;
+    /// Executes the prepared statement with the given data.
+    /// Data must implement [IntoIterator] where `Item` implements [Serialize].
+    /// Each `Item` of the iterator will represent a data row.
+    ///
+    /// If `Item` is map-like, the needed columns are retrieved and consumed,
+    /// getting reordered based on the expected order given through the named parameters.
+    ///
+    /// If `Item` is sequence-like, the data is used as-is.
+    /// Parameter names are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Missing parameter names in map-like types (which can also be caused by duplication)
+    /// or too few/many columns in sequence-like types results in errors.
+    ///
+    /// ```
+    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use serde_json::Value;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// use serde_json::json;
+    /// use serde::Serialize;
+    ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let prep_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?col1, ?col2, ?col3)").unwrap();
+    ///
+    /// let json_data = json!(
+    ///     [
+    ///         ["a", "b", 1],
+    ///         ["c", "d", 2],
+    ///         ["e", "f", 3],
+    ///         ["g", "h", 4]
+    ///     ]
+    /// ).as_array().unwrap();
+    ///
+    /// exa_con.execute_prepared(&prep_stmt, json_data).unwrap();
+    ///
+    /// #[derive(Serialize, Clone)]
+    /// struct Data {
+    ///    col1: String,
+    ///    col2: String,
+    ///    col3: u8
+    /// }
+    ///
+    /// let data_item = Data { col1: "t".to_owned(), col2: "y".to_owned(), col3: 10 };
+    /// let vec_data = vec![data_item.clone(), data_item.clone(), data_item];
+    ///
+    /// exa_con.execute_prepared(&prep_stmt, vec_data).unwrap();
+    /// ```
+    pub fn execute_prepared<T, S>(&mut self, ps: &PreparedStatement, data: T) -> Result<QueryResult>
+    where
+        S: Serialize,
+        T: IntoIterator<Item = S>,
+    {
+        let (num_columns, columns) = ps
+            .params()
+            .map(|p| (p.num_columns(), p.columns()))
+            .unwrap_or((0, [].as_slice()));
+
+        let col_names = columns.iter().map(|c| c.name()).collect::<Vec<_>>();
+        let col_major_data = to_col_major(&col_names, data).map_err(DriverError::DataError)?;
+        let num_rows = col_major_data.num_rows();
+
+        let payload = json!({
+            "command": "executePreparedStatement",
+            "statementHandle": ps.handle(),
+            "numColumns": num_columns,
+            "numRows": num_rows,
+            "columns": columns,
+            "data": col_major_data
+        });
+
+        self.exec_with_one_result(payload)
+    }
+
+    /// Consumes this [QueryResult], closing the inner [ResultSet], if there's one
+    /// and it was not already closed.
+    /// ```
+    /// # use exasol::error::Result;
+    /// # use exasol::{connect, bind, QueryResult};
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
+    /// exa_con.close_result(result);
+    /// ```
+    pub fn close_result(&mut self, qr: QueryResult) -> Result<()> {
+        qr.result_set()
+            .and_then(|rs| match rs.is_closed() {
+                true => None,
+                false => rs.handle(),
+            })
+            .map(|h| self.close_results_impl([h]))
+            .unwrap_or(Ok(()))
+    }
+
+    /// Consumes this [PreparedStatement], closing it.
+    /// ```
+    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::error::Result;
+    /// # use serde_json::Value;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// use serde_json::json;
+    /// use serde::Serialize;
+    ///
+    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// let prep_stmt = exa_con.prepare("INSERT INTO EXA_RUST_TEST VALUES(?col1, ?col2, ?col3)").unwrap();
+    /// exa_con.close_prepared_statement(prep_stmt);
+    /// ```
+    pub fn close_prepared_statement(&mut self, ps: PreparedStatement) -> Result<()> {
+        self.close_prepared_stmt_impl(ps.handle())
+    }
+
+    /// Ping the server and wait for a Pong frame
+    ///
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// exa_con.ping().unwrap();
+    /// ```
+    pub fn ping(&mut self) -> Result<()> {
+        self.ws
+            .write_message(Message::Ping(vec![]))
+            .and(self.ws.read_message())
+            .map_err(RequestError::WebsocketError)
+            .map_err(DriverError::RequestError)?;
         Ok(())
     }
 
-    /// Closes a prepared statement
+    /// Closes multiple results sets by going over the result set handles [Iterator].
     #[inline]
-    pub(crate) fn close_prepared_stmt(&mut self, handle: usize) -> Result<()> {
-        let payload = json!({"command": "closePreparedStatement", "statementHandle": handle});
-        self.do_request(payload)?;
-        Ok(())
+    pub(crate) fn close_results_impl<I>(&mut self, handles: I) -> Result<()>
+    where
+        I: IntoIterator<Item = u16> + Serialize,
+    {
+        let payload = json!({"command": "closeResultSet", "resultSetHandles": handles});
+        self.do_request(payload).map(|_| ())
     }
 
-    /// Ping the server and waits for a Pong frame
-    pub(crate) fn ping(&mut self) -> ReqResult<()> {
-        self.ws.write_message(Message::Ping(vec![]))?;
-        match self.ws.read_message()? {
-            Message::Pong(_) => Ok(()),
-            _ => Err(RequestError::InvalidResponse("pong frame")),
-        }
+    /// Sets connection attributes.
+    #[inline]
+    fn set_attributes(&mut self, attrs: Value) -> Result<()> {
+        let payload = json!({"command": "setAttributes", "attributes": attrs});
+        // Attributes have to be retrieved as well, for consistency.
+        self.do_request(payload)
+            .and_then(|_| self.get_attributes())
+            .map(|_| ())
     }
 
-    /// Returns response data from a request
+    /// Closes a prepared statement through its handle.
+    #[inline]
+    fn close_prepared_stmt_impl(&mut self, h: u16) -> Result<()> {
+        let payload = json!({"command": "closePreparedStatement", "statementHandle": h});
+        self.do_request(payload).map(|_| ())
+    }
+
+    /// Returns response data from a request.
+    #[inline]
     pub(crate) fn get_resp_data(&mut self, payload: Value) -> Result<ResponseData> {
-        self.do_request(payload)?.ok_or_else(|| {
-            DriverError::RequestError(RequestError::InvalidResponse("response data")).into()
-        })
+        self.do_request(payload)?
+            .ok_or_else(|| DriverError::ResponseMismatch("response data").into())
     }
 
-    /// Sends a request and waits for its response
-    pub(crate) fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
+    /// Sends a request and waits for its response.
+    fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
         let resp = self
             .send(payload)
             .and_then(|_| self.recv())
@@ -729,17 +794,28 @@ impl ConnectionImpl {
         Ok(data)
     }
 
+    /// Sends a request for execution and returns the last [QueryResult] received.
+    fn exec_with_one_result(&mut self, payload: Value) -> Result<QueryResult> {
+        self.exec_with_results(payload)?
+            .pop()
+            .ok_or_else(|| DriverError::ResponseMismatch("result sets").into())
+    }
+
     /// Gets the database results as [crate::query_result::Results]
     /// (that's what they deserialize into) and consumes them
     /// to return a usable vector of [QueryResult] enums.
-    pub(crate) fn exec_with_results(
-        &mut self,
-        con_impl: &Rc<RefCell<ConnectionImpl>>,
-        payload: Value,
-    ) -> Result<Vec<QueryResult>> {
+    fn exec_with_results(&mut self, payload: Value) -> Result<Vec<QueryResult>> {
         let lc = self.driver_attr.lowercase_columns;
-        self.get_resp_data(payload)
-            .and_then(|r| r.try_to_query_results(con_impl, lc))
+        let mut results: Vec<QueryResult> = self.get_resp_data(payload)?.try_into()?;
+
+        results.iter_mut().for_each(|qr| {
+            qr.lowercase_columns(lc);
+            qr.result_set()
+                .and_then(|rs| rs.handle())
+                .map(|h| self.rs_handles.insert(h));
+        });
+
+        Ok(results)
     }
 
     #[inline]
@@ -752,7 +828,12 @@ impl ConnectionImpl {
         (self.recv)(&mut self.ws)
     }
 
-    /// Attempts to create a Websocket for the given [ConOpts]
+    /// This method attempts to create the websocket, authenticate in Exasol
+    /// and read the connection attributes afterwards.
+    ///
+    /// We'll get the list of IP addresses resulted from parsing and resolving the DSN
+    /// Then loop through all of them (max once each) until a connection is established.
+    /// Login is attempted afterwards.
     fn try_websocket_from_opts(opts: &ConOpts) -> std::result::Result<WsAddr, ConnectionError> {
         let addresses = opts.parse_dsn()?;
         let ws_prefix = opts.ws_prefix();
@@ -785,6 +866,7 @@ impl ConnectionImpl {
     }
 
     /// Gets connection attributes from Exasol
+    #[inline]
     fn get_attributes(&mut self) -> Result<()> {
         let payload = json!({"command": "getAttributes"});
         self.do_request(payload)?;
@@ -795,10 +877,7 @@ impl ConnectionImpl {
     /// Used during authentication for encrypting the password
     fn get_public_key(&mut self, protocol_version: ProtocolVersion) -> Result<RsaPublicKey> {
         let payload = json!({"command": "login", "protocolVersion": protocol_version});
-
-        let pem = self
-            .get_resp_data(payload)
-            .and_then(|p| p.try_to_public_key_string())?;
+        let pem: String = self.get_resp_data(payload).and_then(|p| p.try_into())?;
 
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)
             .map_err(ConnectionError::PKCS1Error)

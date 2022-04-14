@@ -22,12 +22,12 @@ lazy-regex = "2.3.0"
 thiserror = "1.0.30"
 csv = "1.1.6"
 crossbeam = "0.8.1"
-rcgen = { version = "0.9.2", features = ["pem"] }
 rsa = "0.6.1"
-native-tls = "0.2.10"
-rustls = "0.20.4"
+rcgen = { version = "0.9.2", features = ["pem"], optional = true }
+native-tls = { version = "0.2.10", optional = true }
+rustls = {version = "0.20.4", optional = true }
 flate2 = { version = "1.0.22", optional = true }
 
 [features]
-native-tls = ["tungstenite/native-tls"]
-rustls = ["tungstenite/rustls"]
+native-tls = ["tungstenite/native-tls", "rcgen", "dep:native-tls"]
+rustls = ["tungstenite/rustls", "rcgen", "dep:rustls"]
