@@ -12,21 +12,6 @@ use url;
 /// Result implementation for the crate.;
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl TryFrom<Response> for (Option<ResponseData>, Option<Attributes>) {
-    type Error = Error;
-
-    #[inline]
-    fn try_from(resp: Response) -> Result<Self> {
-        match resp {
-            Response::Ok {
-                response_data: data,
-                attributes: attr,
-            } => Ok((data, attr)),
-            Response::Error { exception: e } => Err(Error::ExasolError(e)),
-        }
-    }
-}
-
 /// Error type for the crate.
 #[derive(Debug, ThisError)]
 pub enum Error {

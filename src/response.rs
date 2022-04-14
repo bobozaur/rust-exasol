@@ -5,7 +5,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 use crate::con_opts::ProtocolVersion;
-use crate::error::{DriverError, RequestError, Result};
+use crate::error::{DriverError, RequestError, Result, Error};
 use serde::de::{DeserializeSeed, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
@@ -33,6 +33,21 @@ pub(crate) enum Response {
     Error {
         exception: ExaError,
     },
+}
+
+impl TryFrom<Response> for (Option<ResponseData>, Option<Attributes>) {
+    type Error = Error;
+
+    #[inline]
+    fn try_from(resp: Response) -> Result<Self> {
+        match resp {
+            Response::Ok {
+                response_data: data,
+                attributes: attr,
+            } => Ok((data, attr)),
+            Response::Error { exception: e } => Err(Error::ExasolError(e)),
+        }
+    }
 }
 
 /// This is the `responseData` field of the JSON response.

@@ -28,7 +28,7 @@ use std::io::Write;
 use std::io::Write;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::RecvError;
+use std::sync::mpsc::{RecvError, Sender};
 use std::sync::{mpsc, Arc, Barrier};
 use std::thread;
 
@@ -504,7 +504,7 @@ impl ConnectionImpl {
         let exa_attr = HashMap::new();
 
         let driver_attr = DriverAttributes {
-            server_addr: Arc::new(addr),
+            server_addr: addr,
             fetch_size: opts.fetch_size(),
             lowercase_columns: opts.lowercase_columns(),
         };
@@ -554,37 +554,38 @@ impl ConnectionImpl {
         T: DeserializeOwned + Send + 'static,
     {
         let barrier = Arc::new(Barrier::new(num_threads + 1));
-        let mut barrier_vec = vec![barrier.clone(); num_threads];
-
         let run = Arc::new(AtomicBool::new(true));
-        let mut run_vec = vec![run.clone(); num_threads];
-
         let (addr_sender, addr_receiver) = mpsc::channel();
-        let mut addr_sender_vec = vec![addr_sender.clone(); num_threads - 1];
-        addr_sender_vec.push(addr_sender);
-
-        let mut server_addr_vec = vec![Arc::clone(&self.driver_attr.server_addr); num_threads];
+        let server_addr = Arc::new(self.driver_attr.server_addr.clone());
+        let utils = HttpTransportUtils::new(barrier.clone(), run.clone(), addr_sender, server_addr);
 
         let handle = thread::spawn(move || {
             let (data_sender, data_receiver) = mpsc::channel();
-            let mut data_sender_vec = vec![data_sender.clone(); num_threads - 1];
-            data_sender_vec.push(data_sender);
+            let mut handles = Vec::with_capacity(num_threads);
 
-            let handles = (0..num_threads)
-                .into_iter()
-                .map(|i| {
-                    let barrier = barrier_vec.pop().unwrap();
-                    let run = run_vec.pop().unwrap();
-                    let addr_sender = addr_sender_vec.pop().unwrap();
-                    let server_addr = server_addr_vec.pop().unwrap();
-                    let data_sender = data_sender_vec.pop().unwrap();
+            for _ in 0..num_threads - 1 {
+                let data_sender = data_sender.clone();
+                let utils = utils.clone();
+                handles.push(thread::spawn(move || {
+                    let mut het = HttpExportThread::new(data_sender);
 
-                    thread::spawn(move || {
-                        let mut het = HttpExportThread::new(data_sender);
-                        het.start(server_addr.as_str(), barrier, run, addr_sender)
-                    })
-                })
-                .collect::<Vec<_>>();
+                    het.start(
+                        utils.server_addr,
+                        utils.barrier,
+                        utils.run,
+                        utils.addr_sender
+                    )
+                }));
+            }
+            handles.push(thread::spawn(move || {
+                let mut het = HttpExportThread::new(data_sender);
+                het.start(
+                    utils.server_addr,
+                    utils.barrier,
+                    utils.run,
+                    utils.addr_sender,
+                )
+            }));
 
             let data = data_receiver.into_iter().collect::<Vec<T>>();
 
@@ -616,7 +617,8 @@ impl ConnectionImpl {
         barrier.wait();
 
         let query = format!("EXPORT EXA_LONG INTO CSV\n{}", hosts?);
-        let query_res = self.execute(con_impl, &query);
+        let payload = json!({"command": "execute", "sqlText": query});
+        let query_res = self.do_request(payload);
 
         handle
             .join()
@@ -834,7 +836,7 @@ impl ConnectionImpl {
 /// unrelated to the Exasol connection itself
 #[derive(Debug)]
 pub(crate) struct DriverAttributes {
-    pub(crate) server_addr: Arc<String>,
+    pub(crate) server_addr: String,
     pub(crate) fetch_size: u32,
     pub(crate) lowercase_columns: bool,
 }
@@ -887,5 +889,29 @@ fn compressed_recv(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) -> ReqResult<R
             }
             _ => continue,
         };
+    }
+}
+
+#[derive(Clone)]
+struct HttpTransportUtils {
+    barrier: Arc<Barrier>,
+    run: Arc<AtomicBool>,
+    addr_sender: Sender<String>,
+    server_addr: Arc<String>,
+}
+
+impl HttpTransportUtils {
+    fn new(
+        barrier: Arc<Barrier>,
+        run: Arc<AtomicBool>,
+        addr_sender: Sender<String>,
+        server_addr: Arc<String>,
+    ) -> Self {
+        Self {
+            barrier,
+            run,
+            addr_sender,
+            server_addr,
+        }
     }
 }
