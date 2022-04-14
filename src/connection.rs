@@ -631,9 +631,9 @@ impl Connection {
     ///         ["e", "f", 3],
     ///         ["g", "h", 4]
     ///     ]
-    /// ).as_array().unwrap();
+    /// );
     ///
-    /// exa_con.execute_prepared(&prep_stmt, json_data).unwrap();
+    /// exa_con.execute_prepared(&prep_stmt, json_data.as_array().unwrap()).unwrap();
     ///
     /// #[derive(Serialize, Clone)]
     /// struct Data {

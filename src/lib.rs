@@ -34,9 +34,9 @@
 //! let data: Vec<Vec<String>> = exa_con.retrieve_rows(&mut result).unwrap();
 //! ```
 //!
-//! Data is retrieved in chunks in the [ResultSet] buffer and only concatenated
-//! in the [Connection::retrieve_rows] method. The buffer size can be changed either in the [ConOpts]
-//! or through the [Connection::set_fetch_size] method.
+//! First 1000 rows get returned immediately and then data is retrieved in chunks in the [ResultSet]
+//! instance buffer and only concatenated in the [Connection::retrieve_rows] method.
+//! The buffer size can be changed either in the [ConOpts] or through the [Connection::set_fetch_size] method.
 //! A lazier approach can be employed by using [Connection::retrieve_nrows] instead, controlling
 //! thus how many rows are returned.
 //!
@@ -117,8 +117,8 @@
 //! // You can also rely on type inference.
 //! // Nothing stops you from changing row types
 //! // on the same result set.
-//! let mut data: Vec<u8> = exa_con.retrieve_nrows(&mut result, 1).unwrap();;
-//! let row2 = data[0];
+//! let mut data: Vec<Vec<u8>> = exa_con.retrieve_nrows(&mut result, 1).unwrap();;
+//! let row2 = data.pop();
 //!
 //! let mut result = exa_con.execute("SELECT 1 as col1, 2 as col2, 3 as col3 \
 //!                               UNION ALL \

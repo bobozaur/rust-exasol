@@ -400,9 +400,9 @@ impl serde::Serialize for ColumnIteratorAdapter {
 /// # let password = env::var("EXA_PASSWORD").unwrap();
 /// #
 /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-/// let result1 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
-/// let result2 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
-/// let result3 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
+/// let mut result1 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
+/// let mut result2 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
+/// let mut result3 = exa_con.execute("SELECT 'val1' as col1, 'val2' as col2 UNION ALL SELECT 'val2' as col1, 'val1' as col2;").unwrap();
 ///
 ///  // Default serde behaviour, which is external tagging, is not supported
 ///  // and it doesn't even make sense in the context of a database row.
@@ -441,23 +441,16 @@ impl serde::Serialize for ColumnIteratorAdapter {
 ///     SomeVar4(SomeRow2)
 ///  }
 ///
-/// if let QueryResult::ResultSet(r) = result1 {
-///     let result1 = r.deserialize::<Val1>();
-///     // Due to the unsupported external tagging
-///     // deserialization this will error out:
-///     // let rows1 = result1.collect::<Result<Vec<Val1>>>().unwrap();
-/// }
-/// if let QueryResult::ResultSet(r) = result2 {
-///     let result2 = r.deserialize::<SomeRow2>();
-///     // But internal tagging works
-///     let rows2 = result2.collect::<Result<Vec<SomeRow2>>>().unwrap();
-/// }
+/// let data: Vec<SomeRow1> = exa_con.retrieve_nrows(&mut result1, 1).unwrap();
+/// // Due to the unsupported external tagging
+/// // deserialization this will error out:
+/// // let data: Vec<Val1> = exa_con.retrieve_nrows(&mut result1, 1).unwrap();
 ///
-/// if let QueryResult::ResultSet(r) = result3 {
-///     let result3 = r.deserialize::<SomeRow3>();
-///     // And so does untagged deserialization
-///     let rows3 = result3.collect::<Result<Vec<SomeRow3>>>().unwrap();
-///  }
+/// // But internal tagging works
+/// let data: Vec<SomeRow2> = exa_con.retrieve_nrows(&mut result2, 1).unwrap();
+///
+/// // And so does untagged deserialization
+/// let data: Vec<SomeRow3> = exa_con.retrieve_nrows(&mut result3, 1).unwrap();
 /// ```
 pub fn deserialize_as_seq<'de, D, F>(deserializer: D) -> std::result::Result<F, D::Error>
 where
