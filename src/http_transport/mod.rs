@@ -13,7 +13,7 @@ use std::io::{BufRead, BufReader, Cursor, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Barrier};
+use std::sync::Arc;
 use stream::MaybeCompressedStream;
 
 /// Convenience alias

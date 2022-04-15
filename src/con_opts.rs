@@ -95,7 +95,7 @@ pub(crate) struct InnerOpts {
     client_version: String,
     client_os: String,
     fetch_size: usize,
-    query_timeout: u32,
+    query_timeout: u64,
     use_encryption: bool,
     use_compression: bool,
     lowercase_columns: bool,
@@ -178,7 +178,7 @@ impl Default for InnerOpts {
 ///  opts.set_dsn("test_dsn");
 ///  opts.set_user("test_user");
 ///  opts.set_password("test_password");
-///  opts.set_schema("test_schema");
+///  opts.set_schema(Some("test_schema"));
 ///  opts.set_autocommit(false);
 /// ```
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
@@ -229,11 +229,11 @@ impl ConOpts {
     }
 
     #[inline]
-    pub fn set_schema<T>(&mut self, schema: T)
+    pub fn set_schema<T>(&mut self, schema: Option<T>)
     where
         T: Into<String>,
     {
-        self.0.schema = Some(schema.into())
+        self.0.schema = schema.map(|s| s.into())
     }
 
     /// User (defaults to `None`).
@@ -288,12 +288,12 @@ impl ConOpts {
 
     /// Query timeout (defaults to `0`, which means it's disabled).
     #[inline]
-    pub fn query_timeout(&self) -> u32 {
+    pub fn query_timeout(&self) -> u64 {
         self.0.query_timeout
     }
 
     #[inline]
-    pub fn set_query_timeout(&mut self, timeout: u32) {
+    pub fn set_query_timeout(&mut self, timeout: u64) {
         self.0.query_timeout = timeout
     }
 

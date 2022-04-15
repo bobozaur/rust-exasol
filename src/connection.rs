@@ -6,9 +6,7 @@ use std::io::Write;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, DriverError, HttpTransportError, RequestError, Result};
-use crate::http_transport::{
-    HttpExportThread, HttpTransport, HttpTransportConfig, HttpTransportOpts,
-};
+use crate::http_transport::{HttpExportThread, HttpTransport, HttpTransportConfig};
 use crate::query::{QueryResult, ResultSetIter};
 use crate::response::{Attributes, PreparedStatement, Response, ResponseData};
 use crate::row::to_col_major;
@@ -22,8 +20,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::net::TcpStream;
 use std::ops::ControlFlow;
-use std::sync::atomic::{fence, AtomicBool, Ordering};
-use std::sync::mpsc::{RecvError, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvError;
 use std::sync::{mpsc, Arc, Barrier};
 use std::thread;
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
@@ -46,12 +44,15 @@ type WsAddr = (WebSocket<MaybeTlsStream<TcpStream>>, String);
 ///
 /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
 /// ```
-pub fn connect(dsn: &str, schema: &str, user: &str, password: &str) -> Result<Connection> {
+pub fn connect<T>(dsn: T, schema: T, user: T, password: T) -> Result<Connection>
+where
+    T: Into<String>,
+{
     let mut opts = ConOpts::new();
     opts.set_dsn(dsn);
     opts.set_user(user);
     opts.set_password(password);
-    opts.set_schema(schema);
+    opts.set_schema(Some(schema));
 
     Connection::new(opts)
 }
@@ -70,7 +71,7 @@ impl Drop for Connection {
     fn drop(&mut self) {
         // Closes result sets and prepared statements
         let ps_handles = std::mem::take(self.rs_handles.borrow_mut());
-        self.close_results_impl(ps_handles);
+        self.close_results_impl(ps_handles).ok();
 
         std::mem::take(&mut self.ps_handles)
             .into_iter()
@@ -130,7 +131,7 @@ impl Connection {
     /// opts.set_dsn(dsn);
     /// opts.set_user(user);
     /// opts.set_password(password);
-    /// opts.set_schema(schema);
+    /// opts.set_schema(None);
     ///
     /// let mut exa_con = Connection::new(opts).unwrap();
     /// ```
@@ -159,6 +160,19 @@ impl Connection {
     }
 
     /// Returns the fetch size of [ResultSet] chunks
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(dsn, schema, user, password).unwrap();
+    /// // Size is in bytes
+    /// assert_eq!(exa_con.fetch_size(), 2 * 1024 * 1024);
+    /// ```
     #[inline]
     pub fn fetch_size(&self) -> usize {
         self.driver_attr.fetch_size
@@ -185,6 +199,18 @@ impl Connection {
     }
 
     /// Returns whether the result set columns are implicitly converted to lower case
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// assert_eq!(exa_con.lowercase_columns(), true);
+    /// ```
     #[inline]
     pub fn lowercase_columns(&self) -> bool {
         self.driver_attr.lowercase_columns
@@ -211,9 +237,30 @@ impl Connection {
     }
 
     /// Returns whether autocommit is enabled
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// assert_eq!(exa_con.autocommit(), true);
+    /// ```
+    // This should not ever fail to unwrap but
+    // we'll return the default set by the driver just in case
+    // An alternative would maybe be setting it if it does not exist,
+    // but there's clearly some problem if that happens as it's always
+    // in the ConOpts.
     #[inline]
     pub fn autocommit(&self) -> bool {
-        self.ws.exa_attr().get("autocommit").unwrap().as_bool().unwrap()
+        self.ws
+            .exa_attr()
+            .get("autocommit")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
     }
 
     /// Sets autocommit mode On or Off. The default is On.
@@ -239,9 +286,30 @@ impl Connection {
     }
 
     /// Returns the current query timeout
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// assert_eq!(exa_con.query_timeout(), 0);
+    /// ```
+    // This should not ever fail to unwrap but
+    // we'll return the default set by the driver just in case
+    // An alternative would maybe be setting it if it does not exist,
+    // but there's clearly some problem if that happens as it's always
+    // in the ConOpts.
     #[inline]
     pub fn query_timeout(&self) -> u64 {
-        self.ws.exa_attr().get("queryTimeout").unwrap().as_u64().unwrap()
+        self.ws
+            .exa_attr()
+            .get("queryTimeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
     }
 
     /// Sets the query timeout
@@ -259,15 +327,31 @@ impl Connection {
     /// exa_con.set_query_timeout(60).unwrap();
     /// ```
     #[inline]
-    pub fn set_query_timeout(&mut self, val: usize) -> Result<()> {
+    pub fn set_query_timeout(&mut self, val: u64) -> Result<()> {
         let payload = json!({ "queryTimeout": val });
         self.set_attributes(payload)
     }
 
-    /// Returns the currently open schema
+    /// Returns the currently open schema, if any
+    /// This can be NULL, hence an Option is returned
+    /// ```
+    /// # use exasol::connect;
+    /// # use std::env;
+    /// #
+    /// # let dsn = env::var("EXA_DSN").unwrap();
+    /// # let schema = env::var("EXA_SCHEMA").unwrap();
+    /// # let user = env::var("EXA_USER").unwrap();
+    /// # let password = env::var("EXA_PASSWORD").unwrap();
+    /// #
+    /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
+    /// assert_eq!(exa_con.schema(), Some(schema));
+    /// ```
     #[inline]
-    pub fn schema(&self) -> &str {
-        self.ws.exa_attr().get("currentSchema").unwrap().as_str().unwrap()
+    pub fn schema(&self) -> Option<&str> {
+        self.ws
+            .exa_attr()
+            .get("currentSchema")
+            .and_then(|v| v.as_str())
     }
 
     /// Sets the currently open schema
@@ -282,10 +366,13 @@ impl Connection {
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
     /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// exa_con.set_schema(&schema).unwrap();
+    /// exa_con.set_schema(Some(schema)).unwrap();
     /// ```
     #[inline]
-    pub fn set_schema(&mut self, schema: &str) -> Result<()> {
+    pub fn set_schema<T>(&mut self, schema: Option<T>) -> Result<()>
+    where
+        T: AsRef<str> + Serialize,
+    {
         let payload = json!({ "currentSchema": schema });
         self.set_attributes(payload)
     }

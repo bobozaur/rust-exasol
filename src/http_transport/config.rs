@@ -12,6 +12,7 @@ pub struct HttpTransportOpts {
     encryption: bool,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for HttpTransportOpts {
     fn default() -> Self {
         Self {

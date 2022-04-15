@@ -1,5 +1,4 @@
 use super::HttpResult;
-use crate::error::HttpTransportError;
 #[cfg(feature = "flate2")]
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 #[cfg(feature = "native-tls")]
