@@ -1,3 +1,7 @@
+use super::HttpResult;
+use crate::error::HttpTransportError;
+#[cfg(feature = "flate2")]
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 #[cfg(feature = "native-tls")]
 use native_tls::{Identity, TlsAcceptor, TlsStream};
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
@@ -10,12 +14,75 @@ use rsa::pkcs8::EncodePrivateKey;
 use rsa::RsaPrivateKey;
 #[cfg(feature = "rustls")]
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
+use std::io::{Read, Write};
 use std::net::TcpStream;
-use crate::error::HttpTransportError;
-use std::io::{BufRead, BufReader, Read, Write};
-use tungstenite::stream::NoDelay;
+#[cfg(feature = "rustls")]
 use std::sync::Arc;
-use super::HttpResult;
+use tungstenite::stream::NoDelay;
+
+pub enum MaybeCompressedStream {
+    /// Socket with no compression
+    Plain(MaybeTlsStream),
+    #[cfg(feature = "flate2")]
+    /// Socket with GZip compression
+    Compressed(MaybeTlsStream),
+}
+
+impl MaybeCompressedStream {
+    /// Creates a new stream from the underlying stream
+    pub fn new(stream: MaybeTlsStream, compression: bool) -> Self {
+        match compression {
+            false => MaybeCompressedStream::Plain(stream),
+            true => {
+                #[cfg(feature = "flate2")]
+                return MaybeCompressedStream::Compressed(stream);
+
+                // Shouldn't ever reach this, but just in case:
+                panic!("Compression enabled without flate2 feature!")
+            }
+        }
+    }
+}
+
+impl Read for MaybeCompressedStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            MaybeCompressedStream::Plain(ref mut s) => s.read(buf),
+            #[cfg(feature = "flate2")]
+            MaybeCompressedStream::Compressed(ref mut s) => GzDecoder::new(s).read(buf),
+        }
+    }
+}
+
+impl Write for MaybeCompressedStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            MaybeCompressedStream::Plain(ref mut s) => s.write(buf),
+            #[cfg(feature = "flate2")]
+            MaybeCompressedStream::Compressed(ref mut s) => {
+                GzEncoder::new(s, Compression::default()).write(buf)
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            MaybeCompressedStream::Plain(ref mut s) => s.flush(),
+            #[cfg(feature = "flate2")]
+            MaybeCompressedStream::Compressed(ref mut s) => s.flush(),
+        }
+    }
+}
+
+impl NoDelay for MaybeCompressedStream {
+    fn set_nodelay(&mut self, nodelay: bool) -> std::io::Result<()> {
+        match self {
+            MaybeCompressedStream::Plain(ref mut s) => s.set_nodelay(nodelay),
+            #[cfg(feature = "flate2")]
+            MaybeCompressedStream::Compressed(ref mut s) => s.set_nodelay(nodelay),
+        }
+    }
+}
 
 /// A stream that might be protected with TLS.
 pub enum MaybeTlsStream {
@@ -30,6 +97,25 @@ pub enum MaybeTlsStream {
 }
 
 impl MaybeTlsStream {
+    /// Wraps the underlying stream
+    pub fn wrap(stream: TcpStream, encryption: bool) -> HttpResult<MaybeTlsStream> {
+        match encryption {
+            false => Ok(MaybeTlsStream::Plain(stream)),
+            true => {
+                #[cfg(any(feature = "native-tls", feature = "rustls"))]
+                let cert = Self::make_cert()?;
+
+                #[cfg(feature = "native-tls")]
+                return Self::get_native_tls_stream(stream, cert);
+
+                #[cfg(feature = "rustls")]
+                return Self::get_rustls_stream(stream, cert);
+
+                Ok(MaybeTlsStream::Plain(stream))
+            }
+        }
+    }
+
     #[cfg(any(feature = "rustls", feature = "native-tls"))]
     fn make_cert() -> HttpResult<Certificate> {
         let mut params = CertificateParams::default();
@@ -77,26 +163,9 @@ impl MaybeTlsStream {
     }
 }
 
-impl TryFrom<TcpStream> for MaybeTlsStream {
-    type Error = HttpTransportError;
-
-    fn try_from(stream: TcpStream) -> HttpResult<MaybeTlsStream> {
-        #[cfg(any(feature = "rustls", feature = "native-tls"))]
-        let cert = Self::make_cert()?;
-
-        #[cfg(feature = "native-tls")]
-        return Self::get_native_tls_stream(stream, cert);
-
-        #[cfg(feature = "rustls")]
-        return Self::get_rustls_stream(stream, cert);
-
-        Ok(MaybeTlsStream::Plain(stream))
-    }
-}
-
 impl Read for MaybeTlsStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match *self {
+        match self {
             MaybeTlsStream::Plain(ref mut s) => s.read(buf),
             #[cfg(feature = "native-tls")]
             MaybeTlsStream::NativeTls(ref mut s) => s.read(buf),
@@ -108,7 +177,7 @@ impl Read for MaybeTlsStream {
 
 impl Write for MaybeTlsStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match *self {
+        match self {
             MaybeTlsStream::Plain(ref mut s) => s.write(buf),
             #[cfg(feature = "native-tls")]
             MaybeTlsStream::NativeTls(ref mut s) => s.write(buf),
@@ -118,7 +187,7 @@ impl Write for MaybeTlsStream {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        match *self {
+        match self {
             MaybeTlsStream::Plain(ref mut s) => s.flush(),
             #[cfg(feature = "native-tls")]
             MaybeTlsStream::NativeTls(ref mut s) => s.flush(),
@@ -130,7 +199,7 @@ impl Write for MaybeTlsStream {
 
 impl NoDelay for MaybeTlsStream {
     fn set_nodelay(&mut self, nodelay: bool) -> std::io::Result<()> {
-        match *self {
+        match self {
             MaybeTlsStream::Plain(ref mut s) => s.set_nodelay(nodelay),
             #[cfg(feature = "native-tls")]
             MaybeTlsStream::NativeTls(ref mut s) => s.set_nodelay(nodelay),

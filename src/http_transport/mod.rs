@@ -1,15 +1,20 @@
+mod config;
 mod stream;
+
 use crate::error::HttpTransportError;
+use crate::http_transport::stream::MaybeTlsStream;
+pub(crate) use config::HttpTransportConfig;
+pub use config::HttpTransportOpts;
 use crossbeam::queue::ArrayQueue;
 use csv::{Reader, WriterBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Cursor, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Barrier};
-use stream::MaybeTlsStream;
+use stream::MaybeCompressedStream;
 
 /// Convenience alias
 type HttpResult<T> = std::result::Result<T, HttpTransportError>;
@@ -34,14 +39,20 @@ const ERROR_HEADERS: &[u8; 57] = b"HTTP/1.1 500 Internal Server Error\r\n\
 
 const WRITE_BUFFER_SIZE: usize = 65536;
 
-pub(crate) struct HttpExportThread<T: DeserializeOwned>(Sender<T>);
+pub(crate) struct HttpExportThread<T: DeserializeOwned> {
+    data_sender: Sender<T>,
+    buf: Vec<u8>,
+}
 
 impl<T> HttpExportThread<T>
 where
     T: DeserializeOwned,
 {
     pub(crate) fn new(data_sender: Sender<T>) -> Self {
-        Self(data_sender)
+        Self {
+            data_sender,
+            buf: Vec::new(),
+        }
     }
 
     fn read_chunk_size<R>(reader: &mut R) -> HttpResult<usize>
@@ -93,53 +104,62 @@ where
 
         Ok(())
     }
-}
 
-impl<T> HttpTransport for HttpExportThread<T>
-where
-    T: DeserializeOwned,
-{
-    fn process_data(
-        &mut self,
-        stream: &mut MaybeTlsStream,
-        run: &Arc<AtomicBool>,
-    ) -> HttpResult<()> {
-        let mut buf = Vec::new();
-        let mut reader = BufReader::new(stream);
+    /// Deserialize and send rows over to parent thread
+    fn deserialize(&mut self) -> HttpResult<()> {
+        // Taking ownership of the data.
+        let cursor = Cursor::new(std::mem::take(&mut self.buf));
+        let csv_reader = Reader::from_reader(cursor);
 
-        // Read all data in buffer.
-        let res = Self::skip_headers(&mut reader, run)
-            .map_err(HttpTransportError::IoError)
-            .and(Self::read_all(run, &mut reader, &mut buf));
-
-        // Send success or error headers to Exasol
-        // depending on whether read encountered errors.
-        let stream = reader.into_inner();
-        match res {
-            Ok(_) => stream.write_all(SUCCESS_HEADERS).map_err(HttpTransportError::IoError),
-            Err(e) => {
-                stream.write_all(ERROR_HEADERS).ok(); // Error e is the error of interest
-                Err(e)
-            }
-        }?;
-
-        // Deserialize and send rows over to parent thread
-        let csv_reader = Reader::from_reader(buf.as_slice());
         for row in csv_reader.into_deserialize() {
-            self.0
+            self.data_sender
                 .send(row?)
                 .map_err(|_| HttpTransportError::SendError)?;
         }
 
         Ok(())
     }
+}
 
-    fn success(stream: &mut MaybeTlsStream) -> HttpResult<()>{
-        stream.write_all(SUCCESS_HEADERS).and(stream.write_all(END_PACKET)).map_err(HttpTransportError::IoError)
+impl<T> HttpTransport for HttpExportThread<T>
+where
+    T: DeserializeOwned,
+{
+    /// Overwritten to also deserialize rows and send them to parent thread.
+    fn run_flow(&mut self, stream: MaybeCompressedStream, run: Arc<AtomicBool>) -> HttpResult<()> {
+        self.do_transport(stream, run).and(self.deserialize())
     }
 
-    fn error(stream: &mut MaybeTlsStream) -> HttpResult<()> {
-        stream.write_all(ERROR_HEADERS).map_err(HttpTransportError::IoError)
+    fn process_data(
+        &mut self,
+        stream: &mut MaybeCompressedStream,
+        run: &Arc<AtomicBool>,
+    ) -> HttpResult<()> {
+        let mut reader = BufReader::new(stream);
+
+        // Read all data in buffer.
+        Self::skip_headers(&mut reader, run)
+            .map_err(HttpTransportError::IoError)
+            .and(Self::read_all(run, &mut reader, &mut self.buf))
+    }
+
+    fn success(stream: &mut MaybeCompressedStream) -> HttpResult<()> {
+        stream
+            .write_all(SUCCESS_HEADERS)
+            .and(stream.write_all(END_PACKET))
+            .map_err(HttpTransportError::IoError)
+    }
+
+    // When doing an EXPORT an error also has to be signaled
+    // to Exasol by sending the error headers.
+    fn error(
+        stream: &mut MaybeCompressedStream,
+        error: HttpTransportError,
+        run: &Arc<AtomicBool>,
+    ) -> HttpResult<()> {
+        Self::stop(run);
+        stream.write_all(ERROR_HEADERS).ok();
+        Err(error)
     }
 }
 
@@ -160,7 +180,7 @@ where
 {
     fn process_data(
         &mut self,
-        mut stream: &mut MaybeTlsStream,
+        mut stream: &mut MaybeCompressedStream,
         run: &Arc<AtomicBool>,
     ) -> HttpResult<()> {
         let mut reader = BufReader::new(stream);
@@ -185,64 +205,72 @@ where
         Ok(())
     }
 
-    fn success(stream: &mut MaybeTlsStream) -> HttpResult<()>{
-        stream.write_all(END_PACKET).map_err(HttpTransportError::IoError)
+    fn success(stream: &mut MaybeCompressedStream) -> HttpResult<()> {
+        stream
+            .write_all(END_PACKET)
+            .map_err(HttpTransportError::IoError)
     }
 
     // Errors will come from Exasol
     // So simply dropping the socket connection later will suffice.
-    fn error(_stream: &mut MaybeTlsStream) -> HttpResult<()> {
-        Ok(())
+    // No special action is required.
+    fn error(
+        _stream: &mut MaybeCompressedStream,
+        error: HttpTransportError,
+        run: &Arc<AtomicBool>,
+    ) -> HttpResult<()> {
+        Self::stop(run);
+        Err(error)
     }
 }
 
 pub(crate) trait HttpTransport {
+    /// Runs the flow of the defined HTTP transport
+    /// Added to be able to customize between IMPORT/EXPORT
+    fn run_flow(&mut self, stream: MaybeCompressedStream, run: Arc<AtomicBool>) -> HttpResult<()> {
+        self.do_transport(stream, run)
+    }
+
     /// Method to overwrite to IMPORT/EXPORT data.
     fn process_data(
         &mut self,
-        stream: &mut MaybeTlsStream,
+        stream: &mut MaybeCompressedStream,
         run: &Arc<AtomicBool>,
     ) -> HttpResult<()>;
 
     /// Defines success behaviour
-    fn success(stream: &mut MaybeTlsStream) -> HttpResult<()>;
+    fn success(stream: &mut MaybeCompressedStream) -> HttpResult<()>;
 
     /// Defines error behaviour
-    fn error(stream: &mut MaybeTlsStream) -> HttpResult<()>;
+    fn error(
+        stream: &mut MaybeCompressedStream,
+        error: HttpTransportError,
+        run: &Arc<AtomicBool>,
+    ) -> HttpResult<()>;
 
-    /// Starts HTTP Transport
-    fn start<A>(
-        &mut self,
-        server_addr: A,
-        barrier: Arc<Barrier>,
-        run: Arc<AtomicBool>,
-        mut addr_sender: Sender<String>,
-    ) -> HttpResult<()>
-    where
-        A: ToSocketAddrs,
-    {
-        // Initialize stream and send internal Exasol addresses to parent thread
-        let res = Self::initialize(server_addr, &mut addr_sender);
-
-        // Wait for the parent thread to read all addresses, compose and execute query
-        barrier.wait();
-
-        // Do actual data processing.
-        let res = res.and_then(|stream| self.do_transport(stream, &run));
-
-        // Signal to stop running the whole HTTP transport if an error was encountered.
-        if res.is_err() {
-            run.store(false, Ordering::Release);
-        }
-
-        res
+    /// Signals to stop running the whole HTTP transport if an error was encountered.
+    fn stop(run: &Arc<AtomicBool>) {
+        run.store(false, Ordering::Release);
     }
 
-        /// Connects a [TcpStream] to the Exasol server,
+    /// Starts HTTP Transport
+    fn start(&mut self, mut config: HttpTransportConfig) -> HttpResult<()> {
+        // Initialize stream and send internal Exasol addresses to parent thread
+        let res = Self::initialize(config.server_addr.as_str(), &mut config.addr_sender);
+
+        // Wait for the parent thread to read all addresses, compose and execute query
+        config.barrier.wait();
+
+        // Do actual data processing.
+        res.and_then(|stream| Self::promote(stream, config.use_encryption, config.use_compression))
+            .and_then(|stream| self.run_flow(stream, config.run))
+    }
+
+    /// Connects a [TcpStream] to the Exasol server,
     /// gets an internal Exasol address for HTTP transport,
     /// sends the address back to the parent thread
     /// and returns the [TcpStream] for further use.
-    fn initialize<A>(server_addr: A, addr_sender: &mut Sender<String>) -> HttpResult<MaybeTlsStream>
+    fn initialize<A>(server_addr: A, addr_sender: &mut Sender<String>) -> HttpResult<TcpStream>
     where
         A: ToSocketAddrs,
     {
@@ -262,8 +290,18 @@ pub(crate) trait HttpTransport {
             .send(Self::parse_response(buf)?)
             .map_err(|_| HttpTransportError::SendError)?;
 
-        // Promote stream to TLS if needed and return it
-        MaybeTlsStream::try_from(stream)
+        // Return created stream
+        Ok(stream)
+    }
+
+    /// Promotes stream to TLS and adds compression as needed
+    fn promote(
+        stream: TcpStream,
+        encryption: bool,
+        compression: bool,
+    ) -> HttpResult<MaybeCompressedStream> {
+        MaybeTlsStream::wrap(stream, encryption)
+            .map(|tls_stream| MaybeCompressedStream::new(tls_stream, compression))
     }
 
     /// Parses response to return the internal Exasol address
@@ -278,29 +316,24 @@ pub(crate) trait HttpTransport {
             .take_while(|b| **b != b'\0')
             .for_each(|b| ipaddr.push(char::from(*b)));
 
-        Ok(format!("http://{}:{}", ipaddr, port))
+        Ok(format!("{}:{}", ipaddr, port))
     }
 
     /// Performs the actual data transport.
     fn do_transport(
         &mut self,
-        mut stream: MaybeTlsStream,
-        run: &Arc<AtomicBool>,
+        mut stream: MaybeCompressedStream,
+        run: Arc<AtomicBool>,
     ) -> HttpResult<()> {
         let res = match run.load(Ordering::Acquire) {
             false => Err(HttpTransportError::ThreadError),
-            true => self.process_data(&mut stream, run),
+            true => self.process_data(&mut stream, &run),
         };
 
-        let res = match res {
+        match res {
             Ok(_) => Self::success(&mut stream),
-            Err(e) => {
-                Self::error(&mut stream).ok(); // Not much to do if this fails
-                Err(e) // Error e is of interest
-            }
-        };
-
-        res
+            Err(e) => Self::error(&mut stream, e, &run),
+        }
     }
 
     /// We don't do anything with the HTTP headers

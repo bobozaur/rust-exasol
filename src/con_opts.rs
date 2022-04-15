@@ -94,7 +94,7 @@ pub(crate) struct InnerOpts {
     client_name: String,
     client_version: String,
     client_os: String,
-    fetch_size: u32,
+    fetch_size: usize,
     query_timeout: u32,
     use_encryption: bool,
     use_compression: bool,
@@ -141,6 +141,8 @@ impl Display for InnerOpts {
 impl Default for InnerOpts {
     fn default() -> Self {
         let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "UNKNOWN".to_owned());
+        let use_encryption = cfg!(any(feature = "native-tls", feature = "rustls"));
+        println!("{}", use_encryption);
 
         Self {
             dsn: None,
@@ -154,7 +156,7 @@ impl Default for InnerOpts {
             client_os: env::consts::OS.to_owned(),
             fetch_size: 5 * 1024 * 1024,
             query_timeout: 0,
-            use_encryption: false,
+            use_encryption,
             use_compression: false,
             lowercase_columns: true,
             autocommit: true,
@@ -275,12 +277,12 @@ impl ConOpts {
 
     /// Data fetch size in bytes (defaults to `5,242,880 = 5 * 1024 * 1024`).
     #[inline]
-    pub fn fetch_size(&self) -> u32 {
+    pub fn fetch_size(&self) -> usize {
         self.0.fetch_size
     }
 
     #[inline]
-    pub fn set_fetch_size(&mut self, fetch_size: u32) {
+    pub fn set_fetch_size(&mut self, fetch_size: usize) {
         self.0.fetch_size = fetch_size
     }
 
@@ -305,13 +307,11 @@ impl ConOpts {
     #[inline]
     #[allow(unused)]
     pub fn set_encryption(&mut self, flag: bool) {
-        #[cfg(any(feature = "native-tls", feature = "rustls"))]
-        {
+        if cfg!(any(feature = "native-tls", feature = "rustls")) {
             self.0.use_encryption = flag;
+        } else {
+            panic!("native-tls or rustls features must be enabled to set encryption")
         }
-
-        #[cfg(not(any(feature = "native-tls", feature = "rustls")))]
-        panic!("native-tls or rustls features must be enabled to set encryption")
     }
 
     /// Compression flag (defaults to `false`).
@@ -324,12 +324,11 @@ impl ConOpts {
     #[inline]
     #[allow(unused)]
     pub fn set_compression(&mut self, flag: bool) {
-        #[cfg(feature = "flate2")]
-        {
+        if cfg!(feature = "flate2") {
             self.0.use_compression = flag;
+        } else {
+            panic!("flate2 feature must be enabled to set compression")
         }
-        #[cfg(not(feature = "flate2"))]
-        panic!("flate2 feature must be enabled to set compression")
     }
 
     /// Lowercase column names flag (defaults to `true`)

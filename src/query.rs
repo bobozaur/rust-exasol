@@ -226,7 +226,7 @@ where
                     "command": "fetch",
                     "resultSetHandle": h,
                     "startPosition": self.rs.total_rows_pos,
-                    "numBytes": self.con.driver_attr.fetch_size
+                    "numBytes": self.con.fetch_size()
                 });
 
                 // Fetch and store data chunk
