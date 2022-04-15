@@ -35,6 +35,6 @@ Licensed under either of
 
 at your option.
 
-## Contribution
-Contributions to this repository, unless explicitly stated otherwise, will be considered dual-licensed under MIT and Apache 2.0.
+## Contributing
+Contributions to this repository, unless explicitly stated otherwise, will be considered dual-licensed under MIT and Apache 2.0.  
 Bugs/issues encountered can be opened [here](https://github.com/bobozaur/rust-exasol/issues)
