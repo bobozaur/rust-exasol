@@ -262,7 +262,7 @@ pub(crate) trait HttpTransport {
         config.barrier.wait();
 
         // Do actual data processing.
-        res.and_then(|stream| Self::promote(stream, config.use_encryption, config.use_compression))
+        res.and_then(|stream| Self::promote(stream, config.encryption, config.compression))
             .and_then(|stream| self.run_flow(stream, config.run))
     }
 
@@ -287,7 +287,7 @@ pub(crate) trait HttpTransport {
         // Parse response and sends address over to parent thread
         // to generate and execute the query.
         addr_sender
-            .send(Self::parse_response(buf)?)
+            .send(Self::parse_address(buf)?)
             .map_err(|_| HttpTransportError::SendError)?;
 
         // Return created stream
@@ -306,7 +306,7 @@ pub(crate) trait HttpTransport {
 
     /// Parses response to return the internal Exasol address
     /// to be used in query.
-    fn parse_response(buf: [u8; 24]) -> HttpResult<String> {
+    fn parse_address(buf: [u8; 24]) -> HttpResult<String> {
         let port_bytes = <[u8; 4]>::try_from(&buf[4..8])?;
         let port = u32::from_le_bytes(port_bytes);
 

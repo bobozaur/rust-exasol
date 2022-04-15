@@ -366,7 +366,7 @@ impl ConOpts {
     /// Parses the provided DSN to expand ranges and resolve IP addresses.
     /// Connection to all nodes will then be attempted in a random order
     /// until one is successful or all failed.
-    pub(crate) fn parse_dsn(&self) -> ConResult<Vec<String>> {
+    pub(crate) fn parse_dsn(&self) -> ConResult<Vec<(String, u16)>> {
         let re = regex!(
             r"(?x)
                     ^(.+?)                     # Hostname prefix
@@ -417,10 +417,10 @@ impl ConOpts {
                 let mut addresses = hosts
                     .into_iter()
                     .map(|h| Self::host_to_ip_list(h, port))
-                    .collect::<ConResult<Vec<Vec<String>>>>()?
+                    .collect::<ConResult<Vec<Vec<(String, u16)>>>>()?
                     .into_iter()
                     .flatten()
-                    .collect::<Vec<String>>();
+                    .collect::<Vec<(String, u16)>>();
 
                 addresses.shuffle(&mut thread_rng());
 
@@ -469,17 +469,11 @@ impl ConOpts {
 
     /// Resolves a hostname to a list of IP
     #[inline]
-    fn host_to_ip_list(host: String, port: u16) -> ConResult<Vec<String>> {
+    fn host_to_ip_list(host: String, port: u16) -> ConResult<Vec<(String, u16)>> {
         Ok(host
             .to_socket_addrs()?
             .map(Self::sock_addr_to_ip)
-            .map(|ip| Self::fmt_ip(ip, port))
-            .collect::<Vec<String>>())
-    }
-
-    /// Adds port to an IP address
-    #[inline]
-    fn fmt_ip(ip: String, port: u16) -> String {
-        format!("{}:{}", ip, port)
+            .map(|ip| (ip, port))
+            .collect::<Vec<(String, u16)>>())
     }
 }

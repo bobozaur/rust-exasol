@@ -61,6 +61,7 @@ pub(crate) enum ResponseData {
     FetchedData(FetchedData),
     PublicKey(PublicKey),
     LoginInfo(LoginInfo),
+    Hosts(Hosts),
     Attributes(Attributes),
 }
 
@@ -93,6 +94,17 @@ impl TryFrom<ResponseData> for FetchedData {
         match value {
             ResponseData::FetchedData(d) => Ok(d),
             _ => Err(DriverError::ResponseMismatch("data chunk").into()),
+        }
+    }
+}
+
+impl TryFrom<ResponseData> for Vec<String> {
+    type Error = Error;
+
+    fn try_from(value: ResponseData) -> std::result::Result<Self, Self::Error> {
+        match value {
+            ResponseData::Hosts(h) => Ok(h.nodes),
+            _ => Err(DriverError::ResponseMismatch("hosts").into()),
         }
     }
 }
@@ -220,6 +232,14 @@ pub(crate) struct LoginInfo {
     protocol_version: ProtocolVersion,
     #[serde(flatten)]
     map: HashMap<String, Value>,
+}
+
+/// Struct representing the hosts of the Exasol cluster
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Hosts {
+    num_nodes: usize,
+    nodes: Vec<String>,
 }
 
 /// Struct representing public key information

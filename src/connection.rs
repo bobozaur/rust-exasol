@@ -1,16 +1,21 @@
 #[cfg(feature = "flate2")]
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use std::borrow::BorrowMut;
+use std::cmp::min;
 #[cfg(feature = "flate2")]
 use std::io::Write;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, DriverError, HttpTransportError, RequestError, Result};
-use crate::http_transport::{HttpExportThread, HttpTransport, HttpTransportConfig};
+use crate::http_transport::{
+    HttpExportThread, HttpTransport, HttpTransportConfig, HttpTransportOpts,
+};
 use crate::query::{QueryResult, ResultSetIter};
 use crate::response::{Attributes, PreparedStatement, Response, ResponseData};
 use crate::row::to_col_major;
 use lazy_regex::regex;
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
 use regex::Captures;
 use rsa::{pkcs1::DecodeRsaPublicKey, RsaPublicKey};
 use serde::de::DeserializeOwned;
@@ -25,11 +30,12 @@ use std::sync::mpsc::RecvError;
 use std::sync::{mpsc, Arc, Barrier};
 use std::thread;
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
+use url::quirks::host;
 use url::Url;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
-type WsAddr = (WebSocket<MaybeTlsStream<TcpStream>>, String);
+type WsAddr = (WebSocket<MaybeTlsStream<TcpStream>>, String, u16);
 
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
@@ -136,11 +142,12 @@ impl Connection {
     /// let mut exa_con = Connection::new(opts).unwrap();
     /// ```
     pub fn new(opts: ConOpts) -> Result<Connection> {
-        let (ws, addr) =
+        let (ws, addr, port) =
             Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
 
         let driver_attr = DriverAttributes {
-            server_addr: addr,
+            port,
+            server_ip: addr,
             fetch_size: opts.fetch_size(),
             lowercase_columns: opts.lowercase_columns(),
         };
@@ -501,47 +508,85 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result = exa_con.export("SELECT * FROM EXA_RUST_TEST LIMIT 1000", 1).unwrap();
+    /// let result = exa_con.export("SELECT * FROM EXA_RUST_TEST LIMIT 1000", None).unwrap();
     ///
     /// result.into_iter().take(5).for_each(|v: (String, String, u32)| println!("{:?}", v))
     /// ```
-    pub fn export<Q, T>(&mut self, query: Q, num_threads: usize) -> Result<Vec<T>>
+    pub fn export<Q, T>(&mut self, query: Q, opts: Option<HttpTransportOpts>) -> Result<Vec<T>>
     where
         T: DeserializeOwned + Send + 'static,
         Q: AsRef<str> + Serialize,
     {
+        // Get default opts if not present
+        let opts = opts.unwrap_or(HttpTransportOpts::default());
+
+        // Get cluster hosts
+        let mut hosts = self.get_nodes()?;
+
+        // Calculate number of threads
+        // The default is 0, which means a thread per cluster
+        // will be used.
+        // If a different value smaller than the number of nodes
+        // in the cluster is provided, then that will be used.
+        let hosts_len = hosts.len();
+        let opts_len = opts.num_threads();
+        let num_threads = match 0 < opts_len && opts_len < hosts_len {
+            true => opts_len,
+            false => hosts_len,
+        };
+
+        // Limit hosts to the number of threads we will spawn.
+        // Randomizing them to balance load.
+        hosts.shuffle(&mut thread_rng());
+        let hosts = hosts.into_iter().take(num_threads).collect();
+
+        // Generating necessary constructs for the export
         let barrier = Arc::new(Barrier::new(num_threads + 1));
         let run = Arc::new(AtomicBool::new(true));
         let (addr_sender, addr_receiver) = mpsc::channel();
-        let server_addr = Arc::new(self.driver_attr.server_addr.clone());
-        let config = HttpTransportConfig::new(
+
+        // Storing them in a struct for locality
+        let mut configs = HttpTransportConfig::generate(
+            hosts,
             barrier.clone(),
             run.clone(),
             addr_sender,
-            server_addr,
-            false,
-            false,
+            opts.encryption(),
+            opts.compression(),
         );
 
+        // Start orchestrator thread that will spawn
+        // worker threads which will export data from Exasol
+        // while the thread itself will retrieve it.
         let handle = thread::spawn(move || {
+            // Setting up data channel
             let (data_sender, data_receiver) = mpsc::channel();
-            let mut handles = Vec::with_capacity(num_threads);
 
-            for _ in 0..num_threads - 1 {
-                let data_sender = data_sender.clone();
-                let config = config.clone();
-                handles.push(thread::spawn(move || {
-                    let mut het = HttpExportThread::new(data_sender);
-                    het.start(config)
-                }));
-            }
-            handles.push(thread::spawn(move || {
-                let mut het = HttpExportThread::new(data_sender);
-                het.start(config)
-            }));
+            // Start worker threads and storing handles to join on them later
+            // Starts a new thread for each config in the interator
+            let mut handles =
+                configs
+                    .into_iter()
+                    .fold(Vec::with_capacity(num_threads), |mut handles, config| {
+                        let data_sender = data_sender.clone();
 
+                        handles.push(thread::spawn(move || {
+                            let mut het = HttpExportThread::new(data_sender);
+                            het.start(config)
+                        }));
+
+                        handles
+                    });
+
+            // Drop the original data sender and config
+            // so that channels do not block indefinitely
+            drop(data_sender);
+
+            // Gather data exported by workers
             let data = data_receiver.into_iter().collect::<Vec<T>>();
 
+            // Join on worker threads handles to ensure there was no error
+            // and return the data after that
             handles
                 .into_iter()
                 .map(|h| {
@@ -553,12 +598,15 @@ impl Connection {
                 .map(|_| data)
         });
 
+        // Main thread will be the executor
+        // After spawning the orchestrator, we gather the Exasol internal addresses
+        // to generate and run the EXPORT query.
         let hosts = (0..num_threads)
             .into_iter()
             .map(|i| {
                 addr_receiver
                     .recv()
-                    .map(|s| format!("AT '{}' FILE '{:0>3}.CSV'", s, i))
+                    .map(|s| format!("AT 'http://{}' FILE '{:0>3}.CSV'", s, i))
             })
             .collect::<std::result::Result<Vec<String>, RecvError>>()
             .map(|v| v.join("\n"))
@@ -567,12 +615,23 @@ impl Connection {
                 DriverError::HttpTransportError(e.into())
             });
 
+        // Aligning main thread with the workers
+        // So that workers don't try to export data before
+        // the main thread even gets the chance to execute the EXPORT query
         barrier.wait();
 
-        let query = format!("EXPORT {} INTO CSV\n{}", query.as_ref(), hosts?);
-        let payload = json!({"command": "execute", "sqlText": query});
-        let query_res = self.do_request(payload);
+        // Generate and run the EXPORT query
+        // The query blocks until the EXPORT is done or an error was encountered.
+        let query = format!("EXPORT ({}) INTO CSV\n{}", query.as_ref(), hosts?);
+        let query_res = self.execute(query);
 
+        // We join on the orchestrator handle
+        // to check for errors or get the data it retrieved.
+        // Thread errors have higher priority than errors that occurred
+        // in the query, because the query will always error out if there
+        // was a thread error, but the reverse is not true.
+        //
+        // If there are no errors, we return the data.
         handle
             .join()
             .map_err(|_| HttpTransportError::ThreadError)
@@ -829,6 +888,22 @@ impl Connection {
         self.close_prepared_stmt_impl(ps.handle())
     }
 
+    /// Returns a Vec containing the addresses of
+    /// all nodes in the Exasol cluster
+    pub fn get_nodes(&mut self) -> Result<Vec<String>> {
+        let addr = self.driver_attr.server_ip.as_str();
+        let port = self.driver_attr.port;
+        let payload = json!({"command": "getHosts", "hostIp": addr});
+        let hosts: Vec<String> = self.get_resp_data(payload)?.try_into()?;
+
+        // We have to reborrow due to a mutable borrow for get_resp_data()
+        let addr = self.driver_attr.server_ip.as_str();
+        Ok(hosts
+            .into_iter()
+            .map(|h| format!("{}:{}", addr, port))
+            .collect())
+    }
+
     /// Ping the server and wait for a Pong frame
     ///
     /// ```
@@ -920,8 +995,8 @@ impl Connection {
 
         let cf = addresses
             .into_iter()
-            .try_fold(ConnectionError::InvalidDSN, |_, addr| {
-                Self::try_websocket_from_url((ws_prefix, addr))
+            .try_fold(ConnectionError::InvalidDSN, |_, (addr, port)| {
+                Self::try_websocket_from_url(ws_prefix, addr, port)
             });
 
         match cf {
@@ -933,14 +1008,18 @@ impl Connection {
     /// Attempts to create a websocket for the given URL
     /// Issues a Break variant if the connection was established
     /// or the Continue variant if an error was encountered.
-    fn try_websocket_from_url(url: (&str, String)) -> ControlFlow<WsAddr, ConnectionError> {
-        let full_url = format!("{}://{}", &url.0, &url.1);
+    fn try_websocket_from_url(
+        prefix: &str,
+        addr: String,
+        port: u16,
+    ) -> ControlFlow<WsAddr, ConnectionError> {
+        let full_url = format!("{}://{}:{}", prefix, &addr, port);
         let res = Url::parse(&full_url)
             .map_err(ConnectionError::from)
             .and_then(|url| tungstenite::connect(url).map_err(ConnectionError::from));
 
         match res {
-            Ok((ws, _)) => ControlFlow::Break((ws, url.1)),
+            Ok((ws, _)) => ControlFlow::Break((ws, addr, port)),
             Err(e) => ControlFlow::Continue(e),
         }
     }
@@ -964,7 +1043,8 @@ impl Connection {
 /// unrelated to the Exasol connection itself
 #[derive(Debug)]
 pub(crate) struct DriverAttributes {
-    pub(crate) server_addr: String,
+    pub(crate) server_ip: String,
+    pub(crate) port: u16,
     pub(crate) fetch_size: usize,
     pub(crate) lowercase_columns: bool,
 }
@@ -976,7 +1056,7 @@ impl Display for DriverAttributes {
             "server_addr: {}\n\
              fetch_size:{}\n\
              lowercase_columns:{}",
-            &self.server_addr, self.fetch_size, self.lowercase_columns
+            &self.server_ip, self.fetch_size, self.lowercase_columns
         )
     }
 }

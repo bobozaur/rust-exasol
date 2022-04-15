@@ -1,3 +1,5 @@
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Barrier};
@@ -6,8 +8,9 @@ use std::sync::{Arc, Barrier};
 ///
 /// Defaults to 0 threads (meaning a thread will be created for all available Exasol nodes in the cluster),
 /// no compression and encryption is conditioned by the `native-tls` and `rustls` feature flags.
+#[derive(Clone, Debug)]
 pub struct HttpTransportOpts {
-    num_threads: u16, // let's, for some reason, not limit this to 255
+    num_threads: usize,
     compression: bool,
     encryption: bool,
 }
@@ -24,7 +27,7 @@ impl Default for HttpTransportOpts {
 }
 
 impl HttpTransportOpts {
-    pub fn new(num_threads: u16, compression: bool, encryption: bool) -> Self {
+    pub fn new(num_threads: usize, compression: bool, encryption: bool) -> Self {
         Self::validate_compression(compression);
         Self::validate_encryption(encryption);
 
@@ -33,6 +36,18 @@ impl HttpTransportOpts {
             compression,
             encryption,
         }
+    }
+
+    pub fn encryption(&self) -> bool {
+        self.encryption
+    }
+
+    pub fn compression(&self) -> bool {
+        self.compression
+    }
+
+    pub fn num_threads(&self) -> usize {
+        self.num_threads
     }
 
     fn validate_encryption(flag: bool) {
@@ -50,32 +65,36 @@ impl HttpTransportOpts {
 
 /// Struct that holds utilities and parameters for
 /// HTTP transport
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct HttpTransportConfig {
     pub(crate) barrier: Arc<Barrier>,
     pub(crate) run: Arc<AtomicBool>,
     pub(crate) addr_sender: Sender<String>,
-    pub(crate) server_addr: Arc<String>,
-    pub(crate) use_encryption: bool,
-    pub(crate) use_compression: bool,
+    pub(crate) server_addr: String,
+    pub(crate) encryption: bool,
+    pub(crate) compression: bool,
 }
 
 impl HttpTransportConfig {
-    pub(crate) fn new(
+    /// Generates a Vec of configs, one for each given address
+    pub(crate) fn generate(
+        mut hosts: Vec<String>,
         barrier: Arc<Barrier>,
         run: Arc<AtomicBool>,
         addr_sender: Sender<String>,
-        server_addr: Arc<String>,
         use_encryption: bool,
         use_compression: bool,
-    ) -> Self {
-        Self {
-            barrier,
-            run,
-            addr_sender,
-            server_addr,
-            use_encryption,
-            use_compression,
-        }
+    ) -> Vec<Self> {
+        hosts
+            .into_iter()
+            .map(|server_addr| Self {
+                server_addr,
+                barrier: barrier.clone(),
+                run: run.clone(),
+                addr_sender: addr_sender.clone(),
+                encryption: use_encryption,
+                compression: use_compression,
+            })
+            .collect()
     }
 }
