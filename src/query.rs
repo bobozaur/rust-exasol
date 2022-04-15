@@ -8,6 +8,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 /// Struct representing the result of a query.
+/// If the query produced a [ResultSet], it will be contained in the `result_set` field.
 #[derive(Debug, Deserialize)]
 #[serde(from = "QueryResultDe")]
 pub struct QueryResult {
@@ -35,6 +36,12 @@ impl QueryResult {
         self.result_set.as_ref()
     }
 
+    /// Returns whether the result has unretrieved rows.
+    /// If the query did not result in a [ResultSet], this method returns false.
+    pub fn has_rows(&self) -> bool {
+        self.result_set().map(|rs| rs.is_closed()).unwrap_or(false)
+    }
+
     /// Returns an optional mutable reference of the  [ResultSet] of the query.
     pub(crate) fn result_set_mut(&mut self) -> Option<&mut ResultSet> {
         self.result_set.as_mut()
@@ -60,6 +67,8 @@ impl From<QueryResultDe> for QueryResult {
     }
 }
 
+/// Struct representing a database result set.
+/// You'll generally only interact with this if you need information about result set columns.
 #[derive(Debug, Deserialize)]
 #[serde(from = "ResultSetDe")]
 pub struct ResultSet {

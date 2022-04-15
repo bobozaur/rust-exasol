@@ -53,7 +53,6 @@
 //! use exasol::error::Result;
 //! use exasol::{connect, bind, QueryResult, ResultSet};
 //! use std::env;
-//! use serde_json::Value;
 //!
 //! let dsn = env::var("EXA_DSN").unwrap();
 //! let schema = env::var("EXA_SCHEMA").unwrap();
@@ -64,7 +63,7 @@
 //! let mut result = exa_con.execute("SELECT * FROM EXA_RUST_TEST LIMIT 1000;").unwrap();
 //! let mut counter = 0;
 //!
-//! loop {
+//! while counter < 3 {
 //!     // Only enough calls necessary to retrieve 100 rows will be made to the database.
 //!     // Any leftover data in the chunk will still be present in the ResultSet buffer.
 //!     // and can be used in later retrievals.
@@ -72,10 +71,12 @@
 //!     // do stuff with data
 //!
 //!     counter += 1;
-//!     if counter == 3 {
-//!         break;
-//!     }
 //! }
+//!
+//! // Alternatively, you can retrieve row chunks while there still are rows in the result set.
+//! // while result.has_rows() {
+//!     // let data: Vec<(String, String, u16)> = exa_con.retrieve_nrows(&mut result, 100).unwrap();
+//! // }
 //!
 //! // Failing to close the result here will leave it up to the
 //! // Connection to do it when it is dropped.
