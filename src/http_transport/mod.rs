@@ -1,12 +1,14 @@
 mod config;
 mod stream;
+mod writer;
+mod reader;
 
 use crate::error::HttpTransportError;
 use crate::http_transport::stream::MaybeTlsStream;
 pub(crate) use config::HttpTransportConfig;
 pub use config::HttpTransportOpts;
-use crossbeam::queue::ArrayQueue;
-use csv::{Reader, WriterBuilder};
+use crossbeam::queue::{ArrayQueue, SegQueue};
+use csv::{Reader, Terminator, Writer, WriterBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::{BufRead, BufReader, Cursor, Read, Write};
@@ -15,6 +17,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use stream::MaybeCompressedStream;
+use writer::ExaRowWriter;
+use reader::ExaRowReader;
 
 /// Convenience alias
 type HttpResult<T> = std::result::Result<T, HttpTransportError>;
@@ -39,9 +43,9 @@ const ERROR_HEADERS: &[u8; 57] = b"HTTP/1.1 500 Internal Server Error\r\n\
 
 const WRITE_BUFFER_SIZE: usize = 65536;
 
+/// HTTP Transport export worker thread.
 pub(crate) struct HttpExportThread<T: DeserializeOwned> {
     data_sender: Sender<T>,
-    buf: Vec<u8>,
 }
 
 impl<T> HttpExportThread<T>
@@ -50,66 +54,25 @@ where
 {
     pub(crate) fn new(data_sender: Sender<T>) -> Self {
         Self {
-            data_sender,
-            buf: Vec::new(),
+            data_sender
         }
     }
+}
 
-    fn read_chunk_size<R>(reader: &mut R) -> HttpResult<usize>
-    where
-        R: BufRead,
-    {
-        let mut hex_len = String::new();
-        reader.read_line(&mut hex_len)?;
+impl<T> HttpTransport for HttpExportThread<T>
+where
+    T: DeserializeOwned,
+{
+    fn process_data(
+        &mut self,
+        stream: &mut MaybeCompressedStream,
+        run: &Arc<AtomicBool>,
+    ) -> HttpResult<()> {
+        let mut reader = ExaRowReader::new(stream, run);
 
-        match hex_len.is_empty() {
-            true => Ok(0),
-            false => usize::from_str_radix(hex_len.trim_end(), 16)
-                .map_err(HttpTransportError::ChunkSizeError),
-        }
-    }
-
-    fn read_chunk<R>(reader: &mut R, size: usize, buf: &mut Vec<u8>) -> HttpResult<()>
-    where
-        R: BufRead,
-    {
-        // Adding 2 to size to read the trailing \r\n that delimit the data chunk
-        let mut tmp_buf = vec![0; size + 2];
-        reader.read_exact(&mut tmp_buf)?;
-
-        // Check chunk end for trailing delimiter
-        // Note the reversed delimiter due to subsequent pop() calls
-        match [tmp_buf.pop(), tmp_buf.pop()] == [Some(b'\n'), Some(b'\r')] {
-            true => Ok(()),
-            false => Err(HttpTransportError::DelimiterError),
-        }?;
-
-        buf.extend(tmp_buf);
-        Ok(())
-    }
-
-    fn read_all<R>(run: &Arc<AtomicBool>, reader: &mut R, buf: &mut Vec<u8>) -> HttpResult<()>
-    where
-        R: BufRead,
-    {
-        let mut chunk_size = Self::read_chunk_size(reader)?;
-
-        // Keep reading while not signaled to stop
-        // and while there's still data.
-        while run.load(Ordering::Acquire) && chunk_size > 0 {
-            Self::read_chunk(reader, chunk_size, buf)
-                .and(Self::read_chunk_size(reader))
-                .map(|size| chunk_size = size)?
-        }
-
-        Ok(())
-    }
-
-    /// Deserialize and send rows over to parent thread
-    fn deserialize(&mut self) -> HttpResult<()> {
-        // Taking ownership of the data.
-        let cursor = Cursor::new(std::mem::take(&mut self.buf));
-        let csv_reader = Reader::from_reader(cursor);
+        // Read all data in buffer.
+        Self::skip_headers(&mut reader, run)?;
+        let csv_reader = Reader::from_reader(reader);
 
         for row in csv_reader.into_deserialize() {
             self.data_sender
@@ -118,29 +81,6 @@ where
         }
 
         Ok(())
-    }
-}
-
-impl<T> HttpTransport for HttpExportThread<T>
-where
-    T: DeserializeOwned,
-{
-    /// Overwritten to also deserialize rows and send them to parent thread.
-    fn run_flow(&mut self, stream: MaybeCompressedStream, run: Arc<AtomicBool>) -> HttpResult<()> {
-        self.do_transport(stream, run).and(self.deserialize())
-    }
-
-    fn process_data(
-        &mut self,
-        stream: &mut MaybeCompressedStream,
-        run: &Arc<AtomicBool>,
-    ) -> HttpResult<()> {
-        let mut reader = BufReader::new(stream);
-
-        // Read all data in buffer.
-        Self::skip_headers(&mut reader, run)
-            .map_err(HttpTransportError::IoError)
-            .and(Self::read_all(run, &mut reader, &mut self.buf))
     }
 
     fn success(stream: &mut MaybeCompressedStream) -> HttpResult<()> {
@@ -163,14 +103,17 @@ where
     }
 }
 
-pub(crate) struct HttpImportThread<T: Serialize>(Arc<ArrayQueue<T>>);
+/// HTTP Transport import worker thread.
+pub(crate) struct HttpImportThread<T: Serialize> {
+    data_queue: Arc<SegQueue<T>>,
+}
 
 impl<T> HttpImportThread<T>
 where
     T: Serialize,
 {
-    pub(crate) fn new(data_queue: Arc<ArrayQueue<T>>) -> Self {
-        Self(data_queue)
+    pub(crate) fn new(data_queue: Arc<SegQueue<T>>) -> Self {
+        Self { data_queue }
     }
 }
 
@@ -192,12 +135,13 @@ where
         let mut writer = WriterBuilder::new()
             .has_headers(false)
             .buffer_capacity(WRITE_BUFFER_SIZE)
-            .from_writer(stream);
+            .terminator(Terminator::CRLF)
+            .from_writer(ExaRowWriter::new(stream, run));
 
-        while run.load(Ordering::Acquire) && !self.0.is_empty() {
-            match self.0.pop() {
-                None => break,
-                Some(r) => writer.serialize(r)?,
+        loop {
+            match self.data_queue.pop() {
+                Some(row) => writer.serialize(row)?,
+                None => break
             }
         }
 
@@ -225,12 +169,6 @@ where
 }
 
 pub(crate) trait HttpTransport {
-    /// Runs the flow of the defined HTTP transport
-    /// Added to be able to customize between IMPORT/EXPORT
-    fn run_flow(&mut self, stream: MaybeCompressedStream, run: Arc<AtomicBool>) -> HttpResult<()> {
-        self.do_transport(stream, run)
-    }
-
     /// Method to overwrite to IMPORT/EXPORT data.
     fn process_data(
         &mut self,
@@ -263,7 +201,7 @@ pub(crate) trait HttpTransport {
 
         // Do actual data processing.
         res.and_then(|stream| Self::promote(stream, config.encryption, config.compression))
-            .and_then(|stream| self.run_flow(stream, config.run))
+            .and_then(|stream| self.transport(stream, config.run))
     }
 
     /// Connects a [TcpStream] to the Exasol server,
@@ -294,33 +232,8 @@ pub(crate) trait HttpTransport {
         Ok(stream)
     }
 
-    /// Promotes stream to TLS and adds compression as needed
-    fn promote(
-        stream: TcpStream,
-        encryption: bool,
-        compression: bool,
-    ) -> HttpResult<MaybeCompressedStream> {
-        MaybeTlsStream::wrap(stream, encryption)
-            .map(|tls_stream| MaybeCompressedStream::new(tls_stream, compression))
-    }
-
-    /// Parses response to return the internal Exasol address
-    /// to be used in query.
-    fn parse_address(buf: [u8; 24]) -> HttpResult<String> {
-        let port_bytes = <[u8; 4]>::try_from(&buf[4..8])?;
-        let port = u32::from_le_bytes(port_bytes);
-
-        let mut ipaddr = String::with_capacity(16);
-        buf[8..]
-            .iter()
-            .take_while(|b| **b != b'\0')
-            .for_each(|b| ipaddr.push(char::from(*b)));
-
-        Ok(format!("{}:{}", ipaddr, port))
-    }
-
     /// Performs the actual data transport.
-    fn do_transport(
+    fn transport(
         &mut self,
         mut stream: MaybeCompressedStream,
         run: Arc<AtomicBool>,
@@ -351,5 +264,30 @@ pub(crate) trait HttpTransport {
             reader.read_line(&mut line)?;
         }
         Ok(())
+    }
+
+        /// Promotes stream to TLS and adds compression as needed
+    fn promote(
+        stream: TcpStream,
+        encryption: bool,
+        compression: bool,
+    ) -> HttpResult<MaybeCompressedStream> {
+        MaybeTlsStream::wrap(stream, encryption)
+            .map(|tls_stream| MaybeCompressedStream::new(tls_stream, compression))
+    }
+
+    /// Parses response to return the internal Exasol address
+    /// to be used in query.
+    fn parse_address(buf: [u8; 24]) -> HttpResult<String> {
+        let port_bytes = <[u8; 4]>::try_from(&buf[4..8])?;
+        let port = u32::from_le_bytes(port_bytes);
+
+        let mut ipaddr = String::with_capacity(16);
+        buf[8..]
+            .iter()
+            .take_while(|b| **b != b'\0')
+            .for_each(|b| ipaddr.push(char::from(*b)));
+
+        Ok(format!("{}:{}", ipaddr, port))
     }
 }
