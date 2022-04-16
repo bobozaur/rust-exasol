@@ -1,4 +1,4 @@
-use super::HttpResult;
+use super::TransportResult;
 #[cfg(feature = "flate2")]
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 #[cfg(feature = "native-tls")]
@@ -97,7 +97,7 @@ pub enum MaybeTlsStream {
 
 impl MaybeTlsStream {
     /// Wraps the underlying stream
-    pub fn wrap(stream: TcpStream, encryption: bool) -> HttpResult<MaybeTlsStream> {
+    pub fn wrap(stream: TcpStream, encryption: bool) -> TransportResult<MaybeTlsStream> {
         match encryption {
             false => Ok(MaybeTlsStream::Plain(stream)),
             true => {
@@ -116,7 +116,7 @@ impl MaybeTlsStream {
     }
 
     #[cfg(any(feature = "rustls", feature = "native-tls"))]
-    fn make_cert() -> HttpResult<Certificate> {
+    fn make_cert() -> TransportResult<Certificate> {
         let mut params = CertificateParams::default();
         params.alg = &PKCS_RSA_SHA256;
         params.key_pair = Some(make_rsa_keypair()?);
@@ -124,7 +124,7 @@ impl MaybeTlsStream {
     }
 
     #[cfg(any(feature = "rustls", feature = "native-tls"))]
-    fn make_rsa_keypair() -> HttpResult<KeyPair> {
+    fn make_rsa_keypair() -> TransportResult<KeyPair> {
         let mut rng = rand::thread_rng();
         let bits = 2048;
         let private_key = RsaPrivateKey::new(&mut rng, bits)?;
@@ -133,7 +133,7 @@ impl MaybeTlsStream {
     }
 
     #[cfg(feature = "native-tls")]
-    fn get_native_tls_stream(socket: TcpStream, cert: Certificate) -> HttpResult<MaybeTlsStream> {
+    fn get_native_tls_stream(socket: TcpStream, cert: Certificate) -> TransportResult<MaybeTlsStream> {
         let tls_cert = cert.serialize_pem()?;
         let key = cert.serialize_private_key_pem();
 
@@ -143,7 +143,7 @@ impl MaybeTlsStream {
     }
 
     #[cfg(feature = "rustls")]
-    fn get_rustls_stream(socket: TcpStream, cert: Certificate) -> HttpResult<MaybeTlsStream> {
+    fn get_rustls_stream(socket: TcpStream, cert: Certificate) -> TransportResult<MaybeTlsStream> {
         let tls_cert = rustls::Certificate(cert.serialize_der()?);
         let key = rustls::PrivateKey(cert.serialize_private_key_der());
 

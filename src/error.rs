@@ -4,7 +4,7 @@ use serde_json;
 use std::array::TryFromSliceError;
 use std::fmt::Debug;
 use std::num::ParseIntError;
-use std::sync::mpsc::RecvError;
+use crossbeam::channel::RecvError;
 use thiserror::Error as ThisError;
 use tungstenite;
 use url;

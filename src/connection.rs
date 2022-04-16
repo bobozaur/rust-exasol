@@ -7,10 +7,11 @@ use std::io::Write;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, DriverError, HttpTransportError, RequestError, Result};
-use crate::http_transport::{HttpExportThread, HttpImportThread, HttpTransport, HttpTransportConfig, HttpTransportOpts};
+use crate::http_transport::{HttpExportThread, HttpImportThread, HttpTransportWorker, HttpTransportConfig, HttpTransportOpts, TransportResult, HttpExportJob, HttpTransportJob, HttpImportJob};
 use crate::query::{QueryResult, ResultSetIter};
 use crate::response::{Attributes, PreparedStatement, Response, ResponseData};
 use crate::row::to_col_major;
+use crossbeam::queue::{ArrayQueue, SegQueue};
 use lazy_regex::regex;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
@@ -24,10 +25,9 @@ use std::fmt::{Debug, Display, Formatter};
 use std::net::TcpStream;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::RecvError;
+use std::sync::mpsc::{Receiver, RecvError};
 use std::sync::{mpsc, Arc, Barrier};
 use std::thread;
-use crossbeam::queue::{ArrayQueue, SegQueue};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::quirks::host;
 use url::Url;
@@ -511,116 +511,12 @@ impl Connection {
     ///
     /// result.into_iter().take(5).for_each(|v: (String, String, u32)| println!("{:?}", v))
     /// ```
-    pub fn export<Q, T>(&mut self, query: Q, opts: Option<HttpTransportOpts>) -> Result<Vec<T>>
+    pub fn export<Q, T>(&mut self, query_or_table: Q, opts: Option<HttpTransportOpts>) -> Result<Vec<T>>
     where
-        T: DeserializeOwned + Send + 'static,
-        Q: AsRef<str> + Serialize,
+        Q: AsRef<str> + Serialize + Send,
+        T: DeserializeOwned + Send,
     {
-        // Get default opts if not present
-        let opts = opts.unwrap_or(HttpTransportOpts::default());
-
-        // Get hosts
-        let hosts = self.gather_hosts(&opts)?;
-        let num_threads = hosts.len();
-
-        // Generating necessary constructs for the export
-        let barrier = Arc::new(Barrier::new(num_threads + 1));
-        let run = Arc::new(AtomicBool::new(true));
-        let (addr_sender, addr_receiver) = mpsc::channel();
-
-        // Storing them in a struct for locality
-        let mut configs = HttpTransportConfig::generate(
-            hosts,
-            barrier.clone(),
-            run.clone(),
-            addr_sender,
-            opts.encryption(),
-            opts.compression(),
-        );
-
-        // Start orchestrator thread that will spawn
-        // worker threads which will export data from Exasol
-        // while the thread itself will retrieve it.
-        let handle = thread::spawn(move || {
-            // Setting up data channel
-            let (data_sender, data_receiver) = mpsc::channel();
-
-            // Start worker threads and storing handles to join on them later
-            // Starts a new thread for each config in the interator
-            let mut handles =
-                configs
-                    .into_iter()
-                    .fold(Vec::with_capacity(num_threads), |mut handles, config| {
-                        let data_sender = data_sender.clone();
-
-                        handles.push(thread::spawn(move || {
-                            let mut het = HttpExportThread::new(data_sender);
-                            het.start(config)
-                        }));
-
-                        handles
-                    });
-
-            // Drop the original data sender and config
-            // so that channels do not block indefinitely
-            drop(data_sender);
-
-            // Gather data exported by workers
-            let data = data_receiver.into_iter().collect::<Vec<T>>();
-
-            // Join on worker threads handles to ensure there was no error
-            // and return the data after that
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join()
-                        .map_err(|_| HttpTransportError::ThreadError)
-                        .and_then(|r| r)
-                })
-                .collect::<std::result::Result<Vec<()>, HttpTransportError>>()
-                .map(|_| data)
-        });
-
-        // Main thread will be the executor
-        // After spawning the orchestrator, we gather the Exasol internal addresses
-        // to generate and run the EXPORT query.
-        let hosts = (0..num_threads)
-            .into_iter()
-            .map(|i| {
-                addr_receiver
-                    .recv()
-                    .map(|s| format!("AT 'http://{}' FILE '{:0>3}.CSV'", s, i))
-            })
-            .collect::<std::result::Result<Vec<String>, RecvError>>()
-            .map(|v| v.join("\n"))
-            .map_err(|e| {
-                run.store(false, Ordering::Release);
-                DriverError::HttpTransportError(e.into())
-            });
-
-        // Aligning main thread with the workers
-        // So that workers don't try to export data before
-        // the main thread even gets the chance to execute the EXPORT query
-        barrier.wait();
-
-        // Generate and run the EXPORT query
-        // The query blocks until the EXPORT is done or an error was encountered.
-        let query = format!("EXPORT ({}) INTO CSV\n{}", query.as_ref(), hosts?);
-        let query_res = self.execute(query);
-
-        // We join on the orchestrator handle
-        // to check for errors or get the data it retrieved.
-        // Thread errors have higher priority than errors that occurred
-        // in the query, because the query will always error out if there
-        // was a thread error, but the reverse is not true.
-        //
-        // If there are no errors, we return the data.
-        handle
-            .join()
-            .map_err(|_| HttpTransportError::ThreadError)
-            .and_then(|r| r)
-            .map_err(|e| DriverError::HttpTransportError(e).into())
-            .and_then(|data| query_res.map(|_| data))
+        HttpExportJob::new(self, query_or_table, opts).run()
     }
 
     /// ```
@@ -637,111 +533,18 @@ impl Connection {
     /// let result: Vec<(String, String, u32)> = exa_con.export("SELECT * FROM EXA_RUST_TEST LIMIT 1000", None).unwrap();
     /// exa_con.import("EXA_RUST_TEST", result, None).unwrap();
     /// ```
-    pub fn import<Q, I, T>(&mut self, table: Q, data: I, opts: Option<HttpTransportOpts>) -> Result<()>
+    pub fn import<Q, T, I>(
+        &mut self,
+        table: Q,
+        data: I,
+        opts: Option<HttpTransportOpts>,
+    ) -> Result<()>
     where
-        Q: AsRef<str> + Serialize,
-        T: Serialize + Send + 'static,
-        I: IntoIterator<Item = T> + Send + 'static,
+        Q: AsRef<str> + Serialize + Send,
+        T: Serialize + Send,
+        I: IntoIterator<Item = T>,
     {
-        // Get default opts if not present
-        let opts = opts.unwrap_or(HttpTransportOpts::default());
-
-        // Get hosts
-        let hosts = self.gather_hosts(&opts)?;
-        let num_threads = hosts.len();
-
-        // Generating necessary constructs for the export
-        let barrier = Arc::new(Barrier::new(num_threads + 1));
-        let run = Arc::new(AtomicBool::new(true));
-        let (addr_sender, addr_receiver) = mpsc::channel();
-
-        // Storing them in a struct for locality
-        let mut configs = HttpTransportConfig::generate(
-            hosts,
-            barrier.clone(),
-            run.clone(),
-            addr_sender,
-            opts.encryption(),
-            opts.compression(),
-        );
-
-        // Start orchestrator thread that will spawn
-        // worker threads which will import data to Exasol
-        // while the thread itself will populate it.
-        let handle = thread::spawn(move || {
-            // Setting up queue
-            let data_queue = Arc::new(SegQueue::new());
-
-            // Start worker threads and storing handles to join on them later
-            // Starts a new thread for each config in the interator
-            let mut handles =
-                configs
-                    .into_iter()
-                    .fold(Vec::with_capacity(num_threads), |mut handles, config| {
-                        let data_queue = data_queue.clone();
-
-                        handles.push(thread::spawn(move || {
-                            let mut het = HttpImportThread::new(data_queue);
-                            het.start(config)
-                        }));
-
-                        handles
-                    });
-
-            data.into_iter().for_each(|item| data_queue.push(item));
-
-            // Join on worker threads handles to ensure there was no error
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join()
-                        .map_err(|_| HttpTransportError::ThreadError)
-                        .and_then(|r| r)
-                })
-                .collect::<std::result::Result<Vec<()>, HttpTransportError>>()
-                .map(|_| ())
-        });
-
-        // Main thread will be the executor
-        // After spawning the orchestrator, we gather the Exasol internal addresses
-        // to generate and run the IMPORT query.
-        let hosts = (0..num_threads)
-            .into_iter()
-            .map(|i| {
-                addr_receiver
-                    .recv()
-                    .map(|s| format!("AT 'http://{}' FILE '{:0>3}.CSV'", s, i))
-            })
-            .collect::<std::result::Result<Vec<String>, RecvError>>()
-            .map(|v| v.join("\n"))
-            .map_err(|e| {
-                run.store(false, Ordering::Release);
-                DriverError::HttpTransportError(e.into())
-            });
-
-        // Aligning main thread with the workers
-        // So that workers don't try to import data before
-        // the main thread even gets the chance to execute the IMPORT query
-        barrier.wait();
-
-        // Generate and run the IMPORT query
-        // The query blocks until the IMPORT is done or an error was encountered.
-        let query = format!("IMPORT INTO {} FROM CSV\n{}", table.as_ref(), hosts?);
-        let query_res = self.execute(query);
-
-        // We join on the orchestrator handle
-        // to check for errors or get the data it retrieved.
-        // Thread errors have higher priority than errors that occurred
-        // in the query, because the query will always error out if there
-        // was a thread error, but the reverse is not true.
-        //
-        // If there are no errors, we return the data.
-        handle
-            .join()
-            .map_err(|_| HttpTransportError::ThreadError)
-            .and_then(|r| r)
-            .map_err(|e| DriverError::HttpTransportError(e).into())
-            .and_then(|_| query_res.map(|_| ()))
+        HttpImportJob::new(self, table, data, opts).run()
     }
 
     /// Creates a prepared statement of type [PreparedStatement].
@@ -1140,29 +943,6 @@ impl Connection {
     #[inline]
     fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
         self.ws.do_request(payload)
-    }
-
-    /// Gather Exasol cluster node hosts for HTTP Transport
-    fn gather_hosts(&mut self, opts: &HttpTransportOpts) -> Result<Vec<String>> {
-        // Get cluster hosts
-        let mut hosts = self.get_nodes()?;
-
-        // Calculate number of threads
-        // The default is 0, which means a thread per cluster
-        // will be used.
-        // If a different value smaller than the number of nodes
-        // in the cluster is provided, then that will be used.
-        let hosts_len = hosts.len();
-        let opts_len = opts.num_threads();
-        let num_threads = match 0 < opts_len && opts_len < hosts_len {
-            true => opts_len,
-            false => hosts_len,
-        };
-
-        // Limit hosts to the number of threads we will spawn.
-        // Randomizing them to balance load.
-        hosts.shuffle(&mut thread_rng());
-        Ok(hosts.into_iter().take(num_threads).collect())
     }
 }
 

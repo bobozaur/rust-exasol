@@ -1,7 +1,7 @@
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::Sender;
+use crossbeam::channel::Sender;
 use std::sync::{Arc, Barrier};
 
 /// HTTP Transport options for IMPORT and EXPORT.
@@ -66,7 +66,7 @@ impl HttpTransportOpts {
 /// Struct that holds utilities and parameters for
 /// HTTP transport
 #[derive(Clone, Debug)]
-pub(crate) struct HttpTransportConfig {
+pub struct HttpTransportConfig {
     pub(crate) barrier: Arc<Barrier>,
     pub(crate) run: Arc<AtomicBool>,
     pub(crate) addr_sender: Sender<String>,
@@ -77,7 +77,7 @@ pub(crate) struct HttpTransportConfig {
 
 impl HttpTransportConfig {
     /// Generates a Vec of configs, one for each given address
-    pub(crate) fn generate(
+    pub fn generate(
         mut hosts: Vec<String>,
         barrier: Arc<Barrier>,
         run: Arc<AtomicBool>,
