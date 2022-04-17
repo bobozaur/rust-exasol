@@ -133,7 +133,10 @@ impl MaybeTlsStream {
     }
 
     #[cfg(feature = "native-tls")]
-    fn get_native_tls_stream(socket: TcpStream, cert: Certificate) -> TransportResult<MaybeTlsStream> {
+    fn get_native_tls_stream(
+        socket: TcpStream,
+        cert: Certificate,
+    ) -> TransportResult<MaybeTlsStream> {
         let tls_cert = cert.serialize_pem()?;
         let key = cert.serialize_private_key_pem();
 

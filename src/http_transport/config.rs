@@ -1,7 +1,7 @@
+use crossbeam::channel::Sender;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use std::sync::atomic::AtomicBool;
-use crossbeam::channel::Sender;
 use std::sync::{Arc, Barrier};
 
 /// HTTP Transport options for IMPORT and EXPORT.

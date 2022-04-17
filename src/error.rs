@@ -1,10 +1,10 @@
 use crate::response::ExaError;
+use crossbeam::channel::RecvError;
 use rsa;
 use serde_json;
 use std::array::TryFromSliceError;
 use std::fmt::Debug;
 use std::num::ParseIntError;
-use crossbeam::channel::RecvError;
 use thiserror::Error as ThisError;
 use tungstenite;
 use url;

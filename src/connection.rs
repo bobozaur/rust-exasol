@@ -7,7 +7,10 @@ use std::io::Write;
 
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, DriverError, HttpTransportError, RequestError, Result};
-use crate::http_transport::{HttpExportThread, HttpImportThread, HttpTransportWorker, HttpTransportConfig, HttpTransportOpts, TransportResult, HttpExportJob, HttpTransportJob, HttpImportJob};
+use crate::http_transport::{
+    HttpExportJob, HttpExportThread, HttpImportJob, HttpImportThread, HttpTransportConfig,
+    HttpTransportJob, HttpTransportOpts, HttpTransportWorker, TransportResult,
+};
 use crate::query::{QueryResult, ResultSetIter};
 use crate::response::{Attributes, PreparedStatement, Response, ResponseData};
 use crate::row::to_col_major;
@@ -511,7 +514,11 @@ impl Connection {
     ///
     /// result.into_iter().take(5).for_each(|v: (String, String, u32)| println!("{:?}", v))
     /// ```
-    pub fn export<Q, T>(&mut self, query_or_table: Q, opts: Option<HttpTransportOpts>) -> Result<Vec<T>>
+    pub fn export<Q, T>(
+        &mut self,
+        query_or_table: Q,
+        opts: Option<HttpTransportOpts>,
+    ) -> Result<Vec<T>>
     where
         Q: AsRef<str> + Serialize + Send,
         T: DeserializeOwned + Send,
