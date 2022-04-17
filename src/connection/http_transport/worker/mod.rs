@@ -2,7 +2,7 @@ use super::stream::{MaybeCompressedStream, MaybeTlsStream};
 use super::{ExaRowReader, ExaRowWriter, HttpTransportConfig, TransportResult};
 use crate::error::HttpTransportError;
 use crossbeam::channel::{Receiver, Sender};
-use csv::{Reader, Terminator, WriterBuilder};
+use csv::{Reader, WriterBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::{BufRead, BufReader, Read, Write};

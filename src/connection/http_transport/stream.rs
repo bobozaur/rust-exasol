@@ -1,8 +1,14 @@
 use super::TransportResult;
-#[cfg(feature = "flate2")]
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+#[cfg(feature = "native-tls")]
+use crate::error::HttpTransportError;
 #[cfg(feature = "native-tls")]
 use __native_tls::{Identity, TlsAcceptor, TlsStream};
+#[cfg(feature = "rustls")]
+use __rustls::{
+    Certificate as RustlsCert, PrivateKey, ServerConfig, ServerConnection, StreamOwned,
+};
+#[cfg(feature = "flate2")]
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rcgen::{Certificate, CertificateParams, KeyPair, PKCS_RSA_SHA256};
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
@@ -11,13 +17,10 @@ use rsa::pkcs1::LineEnding;
 use rsa::pkcs8::EncodePrivateKey;
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rsa::RsaPrivateKey;
-#[cfg(feature = "rustls")]
-use __rustls::{ServerConfig, ServerConnection, StreamOwned, Certificate as RustlsCert, PrivateKey};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 #[cfg(feature = "rustls")]
 use std::sync::Arc;
-use crate::error::HttpTransportError;
 
 pub enum MaybeCompressedStream {
     /// Socket with no compression
@@ -98,7 +101,8 @@ impl MaybeTlsStream {
                 #[cfg(feature = "rustls")]
                 return Self::get_rustls_stream(stream);
 
-                panic!("native-tls or rustls features must be enabled to use encryption")}
+                panic!("native-tls or rustls features must be enabled to use encryption")
+            }
         }
     }
 
@@ -120,16 +124,16 @@ impl MaybeTlsStream {
     }
 
     #[cfg(feature = "native-tls")]
-    fn get_native_tls_stream(
-        socket: TcpStream,
-    ) -> TransportResult<MaybeTlsStream> {
+    fn get_native_tls_stream(socket: TcpStream) -> TransportResult<MaybeTlsStream> {
         let cert = Self::make_cert()?;
         let tls_cert = cert.serialize_pem()?;
         let key = cert.serialize_private_key_pem();
 
         let ident = Identity::from_pkcs8(tls_cert.as_bytes(), key.as_bytes())?;
         let mut connector = TlsAcceptor::new(ident)?;
-        let stream = connector.accept(socket).map_err(|_| HttpTransportError::HandshakeError)?;
+        let stream = connector
+            .accept(socket)
+            .map_err(|_| HttpTransportError::HandshakeError)?;
         Ok(MaybeTlsStream::NativeTls(stream))
     }
 
