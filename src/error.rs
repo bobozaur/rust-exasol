@@ -106,10 +106,10 @@ pub enum HttpTransportError {
     PKCS8Error(#[from] rsa::pkcs8::Error),
     #[cfg(feature = "native-tls")]
     #[error(transparent)]
-    NativeTlsError(#[from] native_tls::Error),
+    NativeTlsError(#[from] __native_tls::Error),
     #[cfg(feature = "rustls")]
     #[error(transparent)]
-    RustlsError(#[from] rustls::Error),
+    RustlsError(#[from] __rustls::Error),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Could not parse port for HTTP transport")]

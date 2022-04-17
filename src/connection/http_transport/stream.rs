@@ -2,7 +2,7 @@ use super::TransportResult;
 #[cfg(feature = "flate2")]
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 #[cfg(feature = "native-tls")]
-use native_tls::{Identity, TlsAcceptor, TlsStream};
+use __native_tls::{Identity, TlsAcceptor, TlsStream};
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rcgen::{Certificate, CertificateParams, KeyPair, PKCS_RSA_SHA256};
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
@@ -12,12 +12,11 @@ use rsa::pkcs8::EncodePrivateKey;
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rsa::RsaPrivateKey;
 #[cfg(feature = "rustls")]
-use rustls::{ServerConfig, ServerConnection, StreamOwned};
+use __rustls::{ServerConfig, ServerConnection, StreamOwned, Certificate as RustlsCert, PrivateKey};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 #[cfg(feature = "rustls")]
 use std::sync::Arc;
-use tungstenite::stream::NoDelay;
 
 pub enum MaybeCompressedStream {
     /// Socket with no compression
@@ -73,16 +72,6 @@ impl Write for MaybeCompressedStream {
     }
 }
 
-impl NoDelay for MaybeCompressedStream {
-    fn set_nodelay(&mut self, nodelay: bool) -> std::io::Result<()> {
-        match self {
-            MaybeCompressedStream::Plain(ref mut s) => s.set_nodelay(nodelay),
-            #[cfg(feature = "flate2")]
-            MaybeCompressedStream::Compressed(ref mut s) => s.set_nodelay(nodelay),
-        }
-    }
-}
-
 /// A stream that might be protected with TLS.
 pub enum MaybeTlsStream {
     /// Unencrypted socket stream.
@@ -92,11 +81,12 @@ pub enum MaybeTlsStream {
     NativeTls(TlsStream<TcpStream>),
     #[cfg(feature = "rustls")]
     /// Encrypted socket stream using `rustls`.
-    Rustls(StreamOwned<rustls::ServerConnection, TcpStream>),
+    Rustls(StreamOwned<ServerConnection, TcpStream>),
 }
 
 impl MaybeTlsStream {
     /// Wraps the underlying stream
+    #[allow(unreachable_code)]
     pub fn wrap(stream: TcpStream, encryption: bool) -> TransportResult<MaybeTlsStream> {
         match encryption {
             false => Ok(MaybeTlsStream::Plain(stream)),
@@ -119,7 +109,7 @@ impl MaybeTlsStream {
     fn make_cert() -> TransportResult<Certificate> {
         let mut params = CertificateParams::default();
         params.alg = &PKCS_RSA_SHA256;
-        params.key_pair = Some(make_rsa_keypair()?);
+        params.key_pair = Some(Self::make_rsa_keypair()?);
         Ok(Certificate::from_params(params)?)
     }
 
@@ -147,8 +137,8 @@ impl MaybeTlsStream {
 
     #[cfg(feature = "rustls")]
     fn get_rustls_stream(socket: TcpStream, cert: Certificate) -> TransportResult<MaybeTlsStream> {
-        let tls_cert = rustls::Certificate(cert.serialize_der()?);
-        let key = rustls::PrivateKey(cert.serialize_private_key_der());
+        let tls_cert = RustlsCert(cert.serialize_der()?);
+        let key = PrivateKey(cert.serialize_private_key_der());
 
         let config = {
             Arc::new(
@@ -195,18 +185,6 @@ impl Write for MaybeTlsStream {
             MaybeTlsStream::NativeTls(ref mut s) => s.flush(),
             #[cfg(feature = "rustls")]
             MaybeTlsStream::Rustls(ref mut s) => s.flush(),
-        }
-    }
-}
-
-impl NoDelay for MaybeTlsStream {
-    fn set_nodelay(&mut self, nodelay: bool) -> std::io::Result<()> {
-        match self {
-            MaybeTlsStream::Plain(ref mut s) => s.set_nodelay(nodelay),
-            #[cfg(feature = "native-tls")]
-            MaybeTlsStream::NativeTls(ref mut s) => s.set_nodelay(nodelay),
-            #[cfg(feature = "rustls")]
-            MaybeTlsStream::Rustls(ref mut s) => s.set_nodelay(nodelay),
         }
     }
 }
