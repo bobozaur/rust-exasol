@@ -238,6 +238,11 @@
 //!
 //! Batch query execution can be achieved through either
 //! [Connection::execute_batch] or [PreparedStatement].
+//!
+//! # HTTP Transport
+//!
+//! Parallel, highly performant, IMPORT/EXPORT operations are supported through [Connection::export]
+//! and [Connection::import].
 
 mod con_opts;
 mod connection;

@@ -495,6 +495,10 @@ impl Connection {
             .unwrap_or(Ok(Vec::new()))
     }
 
+    /// HTTP Transport export of a query or table with row deserialization into a given Rust type.
+    /// The operation can be controlled by passing an [Option] with [HttpTransportOpts].
+    /// By default, a thread is created for every node in the Exasol cluster, encryption is enabled
+    /// and compression is disabled.
     /// ```
     /// # use exasol::{connect, QueryResult};
     /// # use exasol::error::Result;
@@ -522,6 +526,10 @@ impl Connection {
         HttpExportJob::new(self, query_or_table, opts).run()
     }
 
+    /// HTTP Transport import into a table from a Rust type implementing [IntoIterator].
+    /// The operation can be controlled by passing an [Option] with [HttpTransportOpts].
+    /// By default, a thread is created for every node in the Exasol cluster, encryption is enabled
+    /// and compression is disabled.
     /// ```
     /// # use exasol::{connect, QueryResult};
     /// # use exasol::error::Result;
