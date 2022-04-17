@@ -76,7 +76,6 @@ impl Default for InnerOpts {
     fn default() -> Self {
         let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "UNKNOWN".to_owned());
         let use_encryption = cfg!(any(feature = "native-tls", feature = "rustls"));
-        println!("{}", use_encryption);
 
         Self {
             dsn: None,

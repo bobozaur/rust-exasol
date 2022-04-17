@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 
 pub mod reader;
 pub mod writer;
@@ -62,7 +62,6 @@ where
         let csv_reader = Reader::from_reader(reader);
 
         for row in csv_reader.into_deserialize() {
-            println!("got row");
             self.data_handler
                 .send(row?)
                 .map_err(|_| HttpTransportError::SendError)?;
@@ -191,7 +190,7 @@ pub trait HttpTransportWorker {
 
         // Do actual data processing.
         res.and_then(|stream| Self::promote(stream, config.encryption, config.compression))
-            .and_then(|stream| self.transport(stream, config.run))
+            .and_then(|stream| self.transport(stream, config.run, config.barrier))
     }
 
     /// Connects a [TcpStream] to the Exasol server,
@@ -207,6 +206,7 @@ pub trait HttpTransportWorker {
         // This must always be done unencrypted.
         let mut stream = TcpStream::connect(server_addr)?;
         stream.write_all(&SPECIAL_PACKET)?;
+        stream.flush()?;
 
         // Read response buffer.
         let mut buf = [0; 24];
@@ -227,6 +227,7 @@ pub trait HttpTransportWorker {
         &mut self,
         mut stream: MaybeCompressedStream,
         run: Arc<AtomicBool>,
+        barrier: Arc<Barrier>
     ) -> TransportResult<()> {
         let res = match run.load(Ordering::Acquire) {
             false => Err(HttpTransportError::ThreadError),
@@ -236,7 +237,11 @@ pub trait HttpTransportWorker {
         match res {
             Ok(_) => Self::success(&mut stream),
             Err(e) => Self::error(&mut stream, e, &run),
-        }
+        }?;
+
+        stream.flush()?;
+        barrier.wait();
+        Ok(())
     }
 
     /// We don't do anything with the HTTP headers
