@@ -1,4 +1,4 @@
-use crate::response::ExaError;
+use crate::connection::ExaError;
 use crossbeam::channel::RecvError;
 use rsa;
 use serde_json;

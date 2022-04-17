@@ -1,6 +1,6 @@
 use crate::con_opts::ProtocolVersion;
 use crate::error::{DriverError, Error, Result};
-use crate::query::QueryResult;
+use crate::connection::result::QueryResult;
 use crate::ResultSet;
 use serde::de::{DeserializeSeed, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -20,7 +20,7 @@ use std::iter::zip;
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
-pub(crate) enum Response {
+pub enum Response {
     #[serde(rename_all = "camelCase")]
     Ok {
         response_data: Option<ResponseData>,
@@ -55,7 +55,7 @@ impl TryFrom<Response> for (Option<ResponseData>, Option<Attributes>) {
 /// as deserialization has to be non-overlapping yet exhaustive.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum ResponseData {
+pub enum ResponseData {
     PreparedStatement(PreparedStatement),
     Results(Results),
     FetchedData(FetchedData),
@@ -145,21 +145,21 @@ impl std::error::Error for ExaError {}
 #[allow(unused)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Results {
+pub struct Results {
     num_results: u8,
-    pub(crate) results: Vec<QueryResult>,
+    pub results: Vec<QueryResult>,
 }
 
 /// Struct used for deserialization of fetched data
 /// from getting a result set given a statement handle
 #[derive(Debug, Deserialize)]
-pub(crate) struct FetchedData {
+pub struct FetchedData {
     #[serde(rename = "numRows")]
-    pub(crate) chunk_rows_num: usize,
+    pub chunk_rows_num: usize,
     #[serde(skip)]
-    pub(crate) chunk_rows_pos: usize,
+    pub chunk_rows_pos: usize,
     #[serde(default, deserialize_with = "to_row_major")]
-    pub(crate) data: Vec<Value>,
+    pub data: Vec<Value>,
 }
 
 /// Struct representing a prepared statement
@@ -218,9 +218,9 @@ impl ParameterData {
 /// or as part of any response.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Attributes {
+pub struct Attributes {
     #[serde(flatten)]
-    pub(crate) map: HashMap<String, Value>,
+    pub map: HashMap<String, Value>,
 }
 
 /// Struct representing database information returned
@@ -228,7 +228,7 @@ pub(crate) struct Attributes {
 #[allow(unused)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LoginInfo {
+pub struct LoginInfo {
     protocol_version: ProtocolVersion,
     #[serde(flatten)]
     map: HashMap<String, Value>,
@@ -237,7 +237,7 @@ pub(crate) struct LoginInfo {
 /// Struct representing the hosts of the Exasol cluster
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Hosts {
+pub struct Hosts {
     num_nodes: usize,
     nodes: Vec<String>,
 }
@@ -247,7 +247,7 @@ pub(crate) struct Hosts {
 #[allow(unused)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PublicKey {
+pub struct PublicKey {
     public_key_exponent: String,
     public_key_modulus: String,
     public_key_pem: String,
@@ -265,7 +265,7 @@ impl From<PublicKey> for String {
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "resultType", rename_all = "camelCase")]
-pub(crate) enum QueryResultDe {
+pub enum QueryResultDe {
     #[serde(rename_all = "camelCase")]
     ResultSet { result_set: ResultSet },
     #[serde(rename_all = "camelCase")]
@@ -275,16 +275,16 @@ pub(crate) enum QueryResultDe {
 /// Struct used for deserialization of a ResultSet
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ResultSetDe {
+pub struct ResultSetDe {
     #[serde(rename = "numRows")]
-    pub(crate) total_rows_num: usize,
+    pub total_rows_num: usize,
     #[serde(rename = "numRowsInMessage")]
-    pub(crate) chunk_rows_num: usize,
-    pub(crate) num_columns: usize,
-    pub(crate) result_set_handle: Option<u16>,
-    pub(crate) columns: Vec<Column>,
+    pub chunk_rows_num: usize,
+    pub num_columns: usize,
+    pub result_set_handle: Option<u16>,
+    pub columns: Vec<Column>,
     #[serde(default, deserialize_with = "to_row_major")]
-    pub(crate) data: Vec<Value>,
+    pub data: Vec<Value>,
 }
 
 /// Struct containing the name and datatype (as seen in Exasol) of a given column.

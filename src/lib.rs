@@ -198,7 +198,7 @@
 //! opts.set_dsn(dsn);
 //! opts.set_user(user);
 //! opts.set_password(password);
-//! opts.set_schema(schema);
+//! opts.set_schema(Some(schema));
 //!
 //! let exa_con = Connection::new(opts).unwrap();
 //! ```
@@ -228,7 +228,7 @@
 //! opts.set_dsn(dsn);
 //! opts.set_user(user);
 //! opts.set_password(password);
-//! opts.set_schema(schema);
+//! opts.set_schema(Some(schema));
 //!
 //! opts.set_encryption(true);
 //! opts.set_compression(true);
@@ -239,20 +239,11 @@
 //! Batch query execution can be achieved through either
 //! [Connection::execute_batch] or [PreparedStatement].
 
-extern crate core;
-
-pub mod con_opts;
-pub mod connection;
+mod con_opts;
+mod connection;
+mod params;
 pub mod error;
-mod http_transport;
-pub mod params;
-pub mod query;
-pub mod response;
-pub mod row;
 
-pub use crate::con_opts::{ConOpts, ProtocolVersion};
-pub use crate::connection::{connect, Connection};
-pub use crate::params::bind;
-pub use crate::query::{QueryResult, ResultSet};
-pub use crate::response::{Column, DataType, PreparedStatement};
-pub use crate::row::deserialize_as_seq;
+pub use con_opts::{ConOpts, ProtocolVersion};
+pub use connection::{connect, Connection, QueryResult, ResultSet, Column, DataType, PreparedStatement, deserialize_as_seq};
+pub use params::bind;

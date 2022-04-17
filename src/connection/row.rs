@@ -1,5 +1,5 @@
 use crate::error::DataError;
-use crate::response::Column;
+use crate::connection::Column;
 use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, Visitor};
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
 use serde_json::{Error, Map, Value};
@@ -15,13 +15,13 @@ type DataResult<T> = std::result::Result<T, DataError>;
 /// Struct representing a result set row.
 /// This is only used internally to further deserialize it into a given Rust type.
 #[derive(Debug)]
-pub(crate) struct Row<'a> {
+pub struct Row<'a> {
     columns: &'a [Column],
     data: Vec<Value>,
 }
 
 impl<'a> Row<'a> {
-    pub(crate) fn new(data: Vec<Value>, columns: &'a [Column]) -> Self {
+    pub fn new(data: Vec<Value>, columns: &'a [Column]) -> Self {
         Self { columns, data }
     }
 }
@@ -247,7 +247,7 @@ impl<'de> serde::de::Deserializer<'de> for BorrowedCowStrDeserializer<'de> {
 /// Sequence-like data is processed as such, and the columns are merely used to assert length.
 /// Map-like data though requires columns so the data is processed in the expected order. Also,
 /// duplicate columns are not supported, as column values from the map get consumed.
-pub(crate) fn to_col_major<T, C, S>(columns: &[&C], data: T) -> DataResult<ColumnIteratorAdapter>
+pub fn to_col_major<T, C, S>(columns: &[&C], data: T) -> DataResult<ColumnIteratorAdapter>
 where
     S: Serialize,
     C: ?Sized + Hash + Ord + Display,
@@ -356,14 +356,14 @@ impl Iterator for ColumnMajorIterator {
 
 /// Adapter to serialize the column iterator and avoid
 /// allocation of a container that just gets serialized away
-pub(crate) struct ColumnIteratorAdapter(RefCell<ColumnMajorIterator>);
+pub struct ColumnIteratorAdapter(RefCell<ColumnMajorIterator>);
 
 impl ColumnIteratorAdapter {
     fn new(iter: ColumnMajorIterator) -> Self {
         Self(RefCell::new(iter))
     }
 
-    pub(crate) fn num_rows(&self) -> usize {
+    pub fn num_rows(&self) -> usize {
         self.0.borrow_mut().num_rows
     }
 }

@@ -1,7 +1,5 @@
-use crate::connection::Connection;
 use crate::error::{DataError, DriverError, RequestError, Result};
-use crate::response::{Column, FetchedData, QueryResultDe, ResultSetDe};
-use crate::row::Row;
+use super::{Column, FetchedData, QueryResultDe, ResultSetDe, Row, Connection};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 use std::fmt::Debug;
@@ -150,7 +148,7 @@ impl ResultSet {
 /// Iterator over a [ResultSet].
 /// This will only be used internally, which is
 /// why [IntoIterator] is not implemented for [ResultSet].
-pub(crate) struct ResultSetIter<'a, T: DeserializeOwned> {
+pub struct ResultSetIter<'a, T: DeserializeOwned> {
     rs: &'a mut ResultSet,
     con: &'a mut Connection,
     row_type: PhantomData<*const T>,
@@ -160,7 +158,7 @@ impl<'a, T> ResultSetIter<'a, T>
 where
     T: DeserializeOwned,
 {
-    pub(crate) fn new(rs: &'a mut ResultSet, con: &'a mut Connection) -> Self {
+    pub fn new(rs: &'a mut ResultSet, con: &'a mut Connection) -> Self {
         Self {
             rs,
             con,

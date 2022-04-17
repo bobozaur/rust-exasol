@@ -1,19 +1,16 @@
-#[cfg(feature = "flate2")]
-use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
-use std::borrow::BorrowMut;
-use std::cmp::min;
-#[cfg(feature = "flate2")]
-use std::io::Write;
-
+pub use response::{ExaError, Column, DataType, PreparedStatement};
+pub use row::deserialize_as_seq;
+pub use result::{QueryResult, ResultSet};
+use result::ResultSetIter;
+use exa_ws::ExaWebSocket;
+use driver_attr::DriverAttributes;
+use response::{FetchedData, QueryResultDe, ResultSetDe, Response, ResponseData, Attributes};
+use compress::MaybeCompressedWs;
+pub use http_transport::HttpTransportOpts;
+use http_transport::{HttpImportJob, HttpExportJob, HttpTransportJob};
 use crate::con_opts::{ConOpts, ProtocolVersion};
 use crate::error::{ConnectionError, DriverError, HttpTransportError, RequestError, Result};
-use crate::http_transport::{
-    HttpExportJob, HttpExportThread, HttpImportJob, HttpImportThread, HttpTransportConfig,
-    HttpTransportJob, HttpTransportOpts, HttpTransportWorker, TransportResult,
-};
-use crate::query::{QueryResult, ResultSetIter};
-use crate::response::{Attributes, PreparedStatement, Response, ResponseData};
-use crate::row::to_col_major;
+use row::{to_col_major, Row};
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use lazy_regex::regex;
 use rand::prelude::SliceRandom;
@@ -29,11 +26,19 @@ use std::net::TcpStream;
 use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvError};
-use std::sync::{mpsc, Arc, Barrier};
+use std::sync::{Arc, Barrier, mpsc};
 use std::thread;
-use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
+use tungstenite::{Message, stream::MaybeTlsStream, WebSocket};
 use url::quirks::host;
 use url::Url;
+
+mod result;
+mod response;
+mod row;
+mod http_transport;
+mod exa_ws;
+mod driver_attr;
+mod compress;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
@@ -78,7 +83,7 @@ impl Drop for Connection {
     /// Implementing drop to properly get rid of the connection and its components
     fn drop(&mut self) {
         // Closes result sets and prepared statements
-        let ps_handles = std::mem::take(self.rs_handles.borrow_mut());
+        let ps_handles = std::mem::take(&mut self.rs_handles);
         self.close_results_impl(ps_handles).ok();
 
         std::mem::take(&mut self.ps_handles)
@@ -950,221 +955,5 @@ impl Connection {
     #[inline]
     fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
         self.ws.do_request(payload)
-    }
-}
-
-/// Struct holding driver related attributes
-/// unrelated to the Exasol connection itself
-#[derive(Debug)]
-pub(crate) struct DriverAttributes {
-    pub(crate) server_ip: String,
-    pub(crate) port: u16,
-    pub(crate) fetch_size: usize,
-    pub(crate) lowercase_columns: bool,
-}
-
-impl Display for DriverAttributes {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "server_addr: {}\n\
-             fetch_size:{}\n\
-             lowercase_columns:{}",
-            &self.server_ip, self.fetch_size, self.lowercase_columns
-        )
-    }
-}
-
-/// Represents a Websocket with possible Zlib compression set
-enum MaybeCompressedWs {
-    Plain(WebSocket<MaybeTlsStream<TcpStream>>),
-    #[cfg(feature = "flate2")]
-    Compressed(WebSocket<MaybeTlsStream<TcpStream>>),
-}
-
-impl MaybeCompressedWs {
-    /// Consumes self to return a variant that might use compression
-    pub fn enable_compression(self, compression: bool) -> Self {
-        if compression {
-            #[cfg(feature = "flate2")]
-            return match self {
-                Self::Plain(ws) => Self::Compressed(ws),
-                Self::Compressed(ws) => Self::Compressed(ws),
-            };
-
-            // Shouldn't ever reach this, but just in case:
-            panic!("Compression enabled without flate2 feature!")
-        } else {
-            match self {
-                Self::Plain(ws) => Self::Plain(ws),
-                #[cfg(feature = "flate2")]
-                Self::Compressed(ws) => Self::Plain(ws),
-            }
-        }
-    }
-
-    pub fn send(&mut self, payload: Value) -> ReqResult<()> {
-        match self {
-            MaybeCompressedWs::Plain(ws) => {
-                ws.write_message(Message::Text(payload.to_string()))?;
-                Ok(())
-            }
-            #[cfg(feature = "flate2")]
-            MaybeCompressedWs::Compressed(ws) => {
-                let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
-
-                enc.write_all(payload.to_string().as_bytes())
-                    .and(enc.finish())
-                    .and_then(|message| {
-                        ws.write_message(Message::Binary(message))
-                            .map_err(RequestError::WebsocketError)
-                    });
-
-                Ok(())
-            }
-        }
-    }
-
-    pub fn recv(&mut self) -> ReqResult<Response> {
-        match self {
-            MaybeCompressedWs::Plain(ws) => loop {
-                break match ws.read_message()? {
-                    Message::Text(resp) => Ok(serde_json::from_str::<Response>(&resp)?),
-                    Message::Binary(resp) => Ok(serde_json::from_slice::<Response>(&resp)?),
-                    _ => continue,
-                };
-            },
-
-            #[cfg(feature = "flate2")]
-            MaybeCompressedWs::Compressed(ws) => loop {
-                break match ws.read_message()? {
-                    Message::Text(resp) => {
-                        Ok(serde_json::from_reader(ZlibDecoder::new(resp.as_bytes()))?)
-                    }
-                    Message::Binary(resp) => {
-                        Ok(serde_json::from_reader(ZlibDecoder::new(resp.as_slice()))?)
-                    }
-                    _ => continue,
-                };
-            },
-        }
-    }
-
-    pub(crate) fn as_inner(&self) -> &WebSocket<MaybeTlsStream<TcpStream>> {
-        match self {
-            MaybeCompressedWs::Plain(ws) => ws,
-            #[cfg(feature = "flate2")]
-            MaybeCompressedWs::Compressed(ws) => ws,
-        }
-    }
-
-    pub(crate) fn as_inner_mut(&mut self) -> &mut WebSocket<MaybeTlsStream<TcpStream>> {
-        match self {
-            MaybeCompressedWs::Plain(ws) => ws,
-            #[cfg(feature = "flate2")]
-            MaybeCompressedWs::Compressed(ws) => ws,
-        }
-    }
-}
-
-struct ExaWebSocket {
-    ws: MaybeCompressedWs,
-    exa_attr: HashMap<String, Value>,
-}
-
-impl ExaWebSocket {
-    pub(crate) fn new(ws: WebSocket<MaybeTlsStream<TcpStream>>, opts: ConOpts) -> Result<Self> {
-        let mut exa_ws = Self {
-            ws: MaybeCompressedWs::Plain(ws),
-            exa_attr: HashMap::new(),
-        };
-
-        // Get compression flag before consuming opts
-        let compression = opts.compression();
-
-        // Login must always be uncompressed
-        exa_ws.login(opts)?;
-
-        // Enable compression if needed
-        exa_ws.ws = exa_ws.ws.enable_compression(compression);
-
-        Ok(exa_ws)
-    }
-
-    #[inline]
-    pub(crate) fn read_message(&mut self) -> ReqResult<Message> {
-        let msg = self.ws.as_inner_mut().read_message()?;
-        Ok(msg)
-    }
-
-    #[inline]
-    pub(crate) fn write_message(&mut self, msg: Message) -> ReqResult<()> {
-        self.ws.as_inner_mut().write_message(msg)?;
-        Ok(())
-    }
-
-    #[inline]
-    pub(crate) fn close(&mut self) -> ReqResult<()> {
-        self.ws.as_inner_mut().close(None)?;
-        Ok(())
-    }
-
-    #[inline]
-    pub(crate) fn can_write(&self) -> bool {
-        self.ws.as_inner().can_write()
-    }
-
-    #[inline]
-    pub(crate) fn exa_attr(&self) -> &HashMap<String, Value> {
-        &self.exa_attr
-    }
-
-    /// Returns response data from a request.
-    #[inline]
-    pub(crate) fn get_resp_data(&mut self, payload: Value) -> Result<ResponseData> {
-        self.do_request(payload)?
-            .ok_or_else(|| DriverError::ResponseMismatch("response data").into())
-    }
-
-    /// Sends a request and waits for its response.
-    fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
-        let resp = self
-            .ws
-            .send(payload)
-            .and_then(|_| self.ws.recv())
-            .map_err(DriverError::RequestError)?;
-
-        let (data, attr): (Option<ResponseData>, Option<Attributes>) = resp.try_into()?;
-        if let Some(attributes) = attr {
-            self.exa_attr.extend(attributes.map)
-        }
-
-        Ok(data)
-    }
-
-    /// Gets the public key from Exasol
-    /// Used during authentication for encrypting the password
-    fn get_public_key(&mut self, protocol_version: ProtocolVersion) -> Result<RsaPublicKey> {
-        let payload = json!({"command": "login", "protocolVersion": protocol_version});
-        let pem: String = self.get_resp_data(payload).and_then(|p| p.try_into())?;
-
-        Ok(RsaPublicKey::from_pkcs1_pem(&pem)
-            .map_err(ConnectionError::PKCS1Error)
-            .map_err(DriverError::ConnectionError)?)
-    }
-
-    /// Authenticates to Exasol
-    /// Called after the websocket is established
-    ///
-    /// Login is always uncompressed. If compression is enabled, it is set afterwards.
-    fn login(&mut self, opts: ConOpts) -> Result<()> {
-        // Encrypt password using server's public key
-        let key = self.get_public_key(opts.protocol_version())?;
-        let payload = opts.into_value(key).map_err(DriverError::ConnectionError)?;
-
-        // Send login request
-        self.do_request(payload)?;
-
-        Ok(())
     }
 }

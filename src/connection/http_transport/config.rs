@@ -67,12 +67,12 @@ impl HttpTransportOpts {
 /// HTTP transport
 #[derive(Clone, Debug)]
 pub struct HttpTransportConfig {
-    pub(crate) barrier: Arc<Barrier>,
-    pub(crate) run: Arc<AtomicBool>,
-    pub(crate) addr_sender: Sender<String>,
-    pub(crate) server_addr: String,
-    pub(crate) encryption: bool,
-    pub(crate) compression: bool,
+    pub barrier: Arc<Barrier>,
+    pub run: Arc<AtomicBool>,
+    pub addr_sender: Sender<String>,
+    pub server_addr: String,
+    pub encryption: bool,
+    pub compression: bool,
 }
 
 impl HttpTransportConfig {
