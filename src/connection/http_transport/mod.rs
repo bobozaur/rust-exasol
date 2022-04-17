@@ -244,12 +244,12 @@ pub trait HttpTransportJob {
 
         // Start worker threads
         let handles = Self::start_workers(s, configs, num_threads, worker_channel);
+
+        // Generate makeshift IMPORT/EXPORT filenames and locations
         let schema = match opts.encryption() {
             false => "http",
             true => "https",
         };
-
-        // Generate makeshift IMPORT/EXPORT filenames and locations
         let filenames = Self::generate_filenames(schema, num_threads, &addr_receiver);
 
         // Signal threads to stop if there was an error
