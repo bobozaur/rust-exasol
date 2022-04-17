@@ -135,7 +135,7 @@ impl Connection {
     /// opts.set_dsn(dsn);
     /// opts.set_user(user);
     /// opts.set_password(password);
-    /// opts.set_schema(None);
+    /// opts.set_schema(None::<String>);
     ///
     /// let mut exa_con = Connection::new(opts).unwrap();
     /// ```
@@ -176,7 +176,7 @@ impl Connection {
     /// #
     /// # let mut exa_con = connect(dsn, schema, user, password).unwrap();
     /// // Size is in bytes
-    /// assert_eq!(exa_con.fetch_size(), 2 * 1024 * 1024);
+    /// assert_eq!(exa_con.fetch_size(), 5 * 1024 * 1024);
     /// ```
     #[inline]
     pub fn fetch_size(&self) -> usize {
@@ -349,7 +349,7 @@ impl Connection {
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// #
     /// # let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// assert_eq!(exa_con.schema(), Some(schema));
+    /// assert_eq!(exa_con.schema(), Some(schema.as_str()));
     /// ```
     #[inline]
     pub fn schema(&self) -> Option<&str> {

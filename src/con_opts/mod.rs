@@ -381,7 +381,7 @@ impl ConOpts {
         "clientRuntime": "Rust",
         "useCompression": self.0.use_compression,
         "attributes": {
-                    "currentSchema": self.0.schema,
+                    "currentSchema": self.0.schema.unwrap_or_default(),
                     "autocommit": self.0.autocommit,
                     "queryTimeout": self.0.query_timeout
                     }
