@@ -3,28 +3,21 @@ mod stream;
 mod worker;
 
 use crate::error::{DriverError, HttpTransportError, Result};
-use crate::connection::http_transport::stream::MaybeTlsStream;
 use crate::Connection;
+use config::HttpTransportConfig;
 pub use config::HttpTransportOpts;
-use crossbeam::channel::{Receiver, Sender, SendError};
+use crossbeam::channel::{Receiver, Sender};
 use crossbeam::thread::{Scope, ScopedJoinHandle};
-use csv::{Reader, Terminator, Writer, WriterBuilder};
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use worker::reader::ExaRowReader;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::io::{BufRead, BufReader, Cursor, Error, Read, Write};
 use std::marker::PhantomData;
-use std::net::{TcpStream, ToSocketAddrs};
-use std::process::Output;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
-use stream::MaybeCompressedStream;
+use worker::reader::ExaRowReader;
 use worker::writer::ExaRowWriter;
-use config::HttpTransportConfig;
 use worker::{HttpExportThread, HttpImportThread, HttpTransportWorker};
-
 
 /// Convenience alias
 pub type TransportResult<T> = std::result::Result<T, HttpTransportError>;
@@ -84,7 +77,7 @@ where
     }
 
     fn get_opts(&mut self) -> HttpTransportOpts {
-        self.opts.take().unwrap_or(HttpTransportOpts::default())
+        self.opts.take().unwrap_or_default()
     }
 
     fn get_parts(&mut self) -> (&str, &mut Connection, Self::Input) {
@@ -163,7 +156,7 @@ where
     }
 
     fn get_opts(&mut self) -> HttpTransportOpts {
-        self.opts.take().unwrap_or(HttpTransportOpts::default())
+        self.opts.take().unwrap_or_default()
     }
 
     fn get_parts(&mut self) -> (&str, &mut Connection, Self::Input) {
@@ -264,7 +257,7 @@ pub trait HttpTransportJob {
         );
 
         // Start worker threads
-        let mut handles = Self::start_workers(s, configs, num_threads, worker_channel);
+        let handles = Self::start_workers(s, configs, num_threads, worker_channel);
 
         // Generate makeshift IMPORT/EXPORT filenames and locations
         let filenames = Self::generate_filenames(num_threads, &addr_receiver);
@@ -291,7 +284,7 @@ pub trait HttpTransportJob {
         let res = handles
             .into_iter()
             .map(Self::join_handle)
-            .fold(Ok(()), |res, r| r);
+            .fold(Ok(()), |_, r| r);
         Self::map_result(res)
     }
 
@@ -360,7 +353,7 @@ pub trait HttpTransportJob {
     fn generate_filenames(num_threads: usize, addr_receiver: &Receiver<String>) -> Result<String> {
         let res = (0..num_threads)
             .into_iter()
-            .map(|i| Self::recv_address(&addr_receiver, i))
+            .map(|i| Self::recv_address(addr_receiver, i))
             .collect::<TransportResult<Vec<String>>>()
             .map(|v| v.join("\n"));
         Self::map_result(res)

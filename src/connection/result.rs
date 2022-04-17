@@ -1,5 +1,5 @@
+use super::{Column, Connection, FetchedData, QueryResultDe, ResultSetDe, Row};
 use crate::error::{DataError, DriverError, RequestError, Result};
-use super::{Column, FetchedData, QueryResultDe, ResultSetDe, Row, Connection};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 use std::fmt::Debug;

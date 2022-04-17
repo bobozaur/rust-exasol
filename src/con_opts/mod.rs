@@ -1,15 +1,12 @@
 mod protocol_version;
-pub use protocol_version::ProtocolVersion;
 use crate::error::ConnectionError;
 use lazy_regex::regex;
+pub use protocol_version::ProtocolVersion;
 use rand::rngs::OsRng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use regex::Captures;
 use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
-use rsa::pkcs1::DecodeRsaPublicKey;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 use std::env;
 use std::fmt;

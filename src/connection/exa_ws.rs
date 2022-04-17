@@ -1,13 +1,13 @@
+use super::{Attributes, MaybeCompressedWs, ReqResult, ResponseData};
+use crate::error::{ConnectionError, DriverError, Result};
+use crate::{ConOpts, ProtocolVersion};
+use rsa::pkcs1::DecodeRsaPublicKey;
+use rsa::RsaPublicKey;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::TcpStream;
-use serde_json::{json, Value};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
-use rsa::pkcs1::{DecodeRsaPublicKey};
-use rsa::RsaPublicKey;
-use crate::error::{Result, DriverError, ConnectionError};
-use crate::{ConOpts, ProtocolVersion};
-use super::{MaybeCompressedWs, ReqResult, ResponseData, Attributes};
 
 pub struct ExaWebSocket {
     ws: MaybeCompressedWs,

@@ -1,6 +1,6 @@
 use crate::con_opts::ProtocolVersion;
-use crate::error::{DriverError, Error, Result};
 use crate::connection::result::QueryResult;
+use crate::error::{DriverError, Error, Result};
 use crate::ResultSet;
 use serde::de::{DeserializeSeed, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -235,6 +235,7 @@ pub struct LoginInfo {
 }
 
 /// Struct representing the hosts of the Exasol cluster
+#[allow(unused)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hosts {

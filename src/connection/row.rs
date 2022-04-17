@@ -1,5 +1,5 @@
-use crate::error::DataError;
 use crate::connection::Column;
+use crate::error::DataError;
 use serde::de::{DeserializeSeed, Error as SError, IntoDeserializer, MapAccess, Visitor};
 use serde::{forward_to_deserialize_any, Deserialize, Deserializer, Serialize};
 use serde_json::{Error, Map, Value};

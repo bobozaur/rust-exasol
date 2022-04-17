@@ -1,44 +1,35 @@
-pub use response::{ExaError, Column, DataType, PreparedStatement};
-pub use row::deserialize_as_seq;
-pub use result::{QueryResult, ResultSet};
-use result::ResultSetIter;
-use exa_ws::ExaWebSocket;
-use driver_attr::DriverAttributes;
-use response::{FetchedData, QueryResultDe, ResultSetDe, Response, ResponseData, Attributes};
+use crate::con_opts::ConOpts;
+use crate::error::{ConnectionError, DriverError, RequestError, Result};
 use compress::MaybeCompressedWs;
+use driver_attr::DriverAttributes;
+use exa_ws::ExaWebSocket;
 pub use http_transport::HttpTransportOpts;
-use http_transport::{HttpImportJob, HttpExportJob, HttpTransportJob};
-use crate::con_opts::{ConOpts, ProtocolVersion};
-use crate::error::{ConnectionError, DriverError, HttpTransportError, RequestError, Result};
-use row::{to_col_major, Row};
-use crossbeam::queue::{ArrayQueue, SegQueue};
+use http_transport::{HttpExportJob, HttpImportJob, HttpTransportJob};
 use lazy_regex::regex;
-use rand::prelude::SliceRandom;
-use rand::thread_rng;
 use regex::Captures;
-use rsa::{pkcs1::DecodeRsaPublicKey, RsaPublicKey};
+use response::{Attributes, FetchedData, QueryResultDe, Response, ResponseData, ResultSetDe};
+pub use response::{Column, DataType, ExaError, PreparedStatement};
+use result::ResultSetIter;
+pub use result::{QueryResult, ResultSet};
+pub use row::deserialize_as_seq;
+use row::{to_col_major, Row};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Display, Formatter};
+use std::collections::HashSet;
+use std::fmt::{Debug, Formatter};
 use std::net::TcpStream;
 use std::ops::ControlFlow;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvError};
-use std::sync::{Arc, Barrier, mpsc};
-use std::thread;
-use tungstenite::{Message, stream::MaybeTlsStream, WebSocket};
-use url::quirks::host;
+use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
-mod result;
-mod response;
-mod row;
-mod http_transport;
-mod exa_ws;
-mod driver_attr;
 mod compress;
+mod driver_attr;
+mod exa_ws;
+mod http_transport;
+mod response;
+mod result;
+mod row;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
@@ -815,11 +806,9 @@ impl Connection {
         let payload = json!({"command": "getHosts", "hostIp": addr});
         let hosts: Vec<String> = self.get_resp_data(payload)?.try_into()?;
 
-        // We have to reborrow due to a mutable borrow for get_resp_data()
-        let addr = self.driver_attr.server_ip.as_str();
         Ok(hosts
             .into_iter()
-            .map(|h| format!("{}:{}", addr, port))
+            .map(|h| format!("{}:{}", h, port))
             .collect())
     }
 

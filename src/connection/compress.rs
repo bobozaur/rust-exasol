@@ -1,16 +1,13 @@
 #[cfg(feature = "flate2")]
-use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
-use std::borrow::BorrowMut;
-use std::cmp::min;
+use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 #[cfg(feature = "flate2")]
 use std::io::Write;
 
-use std::net::TcpStream;
+use super::{ReqResult, Response};
 use serde_json::Value;
+use std::net::TcpStream;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
-use crate::error::RequestError;
-use super::{ReqResult, Response};
 
 /// Represents a Websocket with possible Zlib compression set
 pub enum MaybeCompressedWs {

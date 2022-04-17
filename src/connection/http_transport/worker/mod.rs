@@ -1,14 +1,14 @@
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use super::stream::{MaybeCompressedStream, MaybeTlsStream};
+use super::{ExaRowReader, ExaRowWriter, HttpTransportConfig, TransportResult};
+use crate::error::HttpTransportError;
 use crossbeam::channel::{Receiver, Sender};
 use csv::{Reader, Terminator, WriterBuilder};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use super::stream::{MaybeCompressedStream, MaybeTlsStream};
-use super::{ExaRowReader, ExaRowWriter, HttpTransportConfig, TransportResult};
-use crate::error::HttpTransportError;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 pub mod reader;
 pub mod writer;

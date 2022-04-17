@@ -241,9 +241,12 @@
 
 mod con_opts;
 mod connection;
-mod params;
 pub mod error;
+mod params;
 
 pub use con_opts::{ConOpts, ProtocolVersion};
-pub use connection::{connect, Connection, QueryResult, ResultSet, Column, DataType, PreparedStatement, deserialize_as_seq};
+pub use connection::{
+    connect, deserialize_as_seq, Column, Connection, DataType, PreparedStatement, QueryResult,
+    ResultSet,
+};
 pub use params::bind;

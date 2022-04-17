@@ -1,6 +1,4 @@
 use crossbeam::channel::Sender;
-use rand::prelude::SliceRandom;
-use rand::thread_rng;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Barrier};
 
@@ -78,7 +76,7 @@ pub struct HttpTransportConfig {
 impl HttpTransportConfig {
     /// Generates a Vec of configs, one for each given address
     pub fn generate(
-        mut hosts: Vec<String>,
+        hosts: Vec<String>,
         barrier: Arc<Barrier>,
         run: Arc<AtomicBool>,
         addr_sender: Sender<String>,
