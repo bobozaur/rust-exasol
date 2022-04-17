@@ -107,6 +107,9 @@ pub enum HttpTransportError {
     #[cfg(feature = "native-tls")]
     #[error(transparent)]
     NativeTlsError(#[from] __native_tls::Error),
+    #[cfg(feature = "native-tls")]
+    #[error("Error occurred during TLS handshake")]
+    HandshakeError,
     #[cfg(feature = "rustls")]
     #[error(transparent)]
     RustlsError(#[from] __rustls::Error),

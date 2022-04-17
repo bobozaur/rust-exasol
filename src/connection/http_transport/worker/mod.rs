@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::Arc;
 
 pub mod reader;
 pub mod writer;
@@ -120,7 +120,6 @@ where
         let mut writer = WriterBuilder::new()
             .has_headers(false)
             .buffer_capacity(WRITE_BUFFER_SIZE)
-            .terminator(Terminator::CRLF)
             .from_writer(ExaRowWriter::new(stream, run));
 
         for row in &self.data_handler {
@@ -183,14 +182,19 @@ pub trait HttpTransportWorker {
     /// Starts HTTP Transport
     fn start(&mut self, mut config: HttpTransportConfig) -> TransportResult<()> {
         // Initialize stream and send internal Exasol addresses to parent thread
-        let res = Self::initialize(config.server_addr.as_str(), &mut config.addr_sender);
+        let socket = Self::initialize(config.server_addr.as_str(), &mut config.addr_sender);
 
         // Wait for the parent thread to read all addresses, compose and execute query
         config.barrier.wait();
 
         // Do actual data processing.
-        res.and_then(|stream| Self::promote(stream, config.encryption, config.compression))
-            .and_then(|stream| self.transport(stream, config.run, config.barrier))
+        let socket = socket
+            .and_then(|stream| Self::promote(stream, config.encryption, config.compression))
+            .and_then(|stream| self.transport(stream, config.run));
+
+        // Wait for query execution to end before dropping the socket.
+        config.barrier.wait();
+        socket.map(|_| ())
     }
 
     /// Connects a [TcpStream] to the Exasol server,
@@ -223,12 +227,12 @@ pub trait HttpTransportWorker {
     }
 
     /// Performs the actual data transport.
+    /// We return the socket to avoid dropping it yet.
     fn transport(
         &mut self,
         mut stream: MaybeCompressedStream,
         run: Arc<AtomicBool>,
-        barrier: Arc<Barrier>
-    ) -> TransportResult<()> {
+    ) -> TransportResult<MaybeCompressedStream> {
         let res = match run.load(Ordering::Acquire) {
             false => Err(HttpTransportError::ThreadError),
             true => self.process_data(&mut stream, &run),
@@ -240,8 +244,7 @@ pub trait HttpTransportWorker {
         }?;
 
         stream.flush()?;
-        barrier.wait();
-        Ok(())
+        Ok(stream)
     }
 
     /// We don't do anything with the HTTP headers

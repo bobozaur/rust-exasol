@@ -17,6 +17,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 #[cfg(feature = "rustls")]
 use std::sync::Arc;
+use crate::error::HttpTransportError;
 
 pub enum MaybeCompressedStream {
     /// Socket with no compression
@@ -91,17 +92,13 @@ impl MaybeTlsStream {
         match encryption {
             false => Ok(MaybeTlsStream::Plain(stream)),
             true => {
-                #[cfg(any(feature = "native-tls", feature = "rustls"))]
-                let cert = Self::make_cert()?;
-
                 #[cfg(feature = "native-tls")]
-                return Self::get_native_tls_stream(stream, cert);
+                return Self::get_native_tls_stream(stream);
 
                 #[cfg(feature = "rustls")]
-                return Self::get_rustls_stream(stream, cert);
+                return Self::get_rustls_stream(stream);
 
-                Ok(MaybeTlsStream::Plain(stream))
-            }
+                panic!("native-tls or rustls features must be enabled to use encryption")}
         }
     }
 
@@ -125,18 +122,20 @@ impl MaybeTlsStream {
     #[cfg(feature = "native-tls")]
     fn get_native_tls_stream(
         socket: TcpStream,
-        cert: Certificate,
     ) -> TransportResult<MaybeTlsStream> {
+        let cert = Self::make_cert()?;
         let tls_cert = cert.serialize_pem()?;
         let key = cert.serialize_private_key_pem();
 
         let ident = Identity::from_pkcs8(tls_cert.as_bytes(), key.as_bytes())?;
         let mut connector = TlsAcceptor::new(ident)?;
-        Ok(MaybeTlsStream::NativeTls(connector.accept(socket)?))
+        let stream = connector.accept(socket).map_err(|_| HttpTransportError::HandshakeError)?;
+        Ok(MaybeTlsStream::NativeTls(stream))
     }
 
     #[cfg(feature = "rustls")]
-    fn get_rustls_stream(socket: TcpStream, cert: Certificate) -> TransportResult<MaybeTlsStream> {
+    fn get_rustls_stream(socket: TcpStream) -> TransportResult<MaybeTlsStream> {
+        let cert = Self::make_cert()?;
         let tls_cert = RustlsCert(cert.serialize_der()?);
         let key = PrivateKey(cert.serialize_private_key_der());
 
