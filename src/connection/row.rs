@@ -441,16 +441,16 @@ impl serde::Serialize for ColumnIteratorAdapter {
 ///     SomeVar4(SomeRow2)
 ///  }
 ///
-/// let data: Vec<SomeRow1> = exa_con.retrieve_nrows(&mut result1, 1).unwrap();
+/// let data: Vec<SomeRow1> = exa_con.fetch(&mut result1, 1).unwrap();
 /// // Due to the unsupported external tagging
 /// // deserialization this will error out:
 /// // let data: Vec<Val1> = exa_con.retrieve_nrows(&mut result1, 1).unwrap();
 ///
 /// // But internal tagging works
-/// let data: Vec<SomeRow2> = exa_con.retrieve_nrows(&mut result2, 1).unwrap();
+/// let data: Vec<SomeRow2> = exa_con.fetch(&mut result2, 1).unwrap();
 ///
 /// // And so does untagged deserialization
-/// let data: Vec<SomeRow3> = exa_con.retrieve_nrows(&mut result3, 1).unwrap();
+/// let data: Vec<SomeRow3> = exa_con.fetch(&mut result3, 1).unwrap();
 /// ```
 pub fn deserialize_as_seq<'de, D, F>(deserializer: D) -> std::result::Result<F, D::Error>
 where

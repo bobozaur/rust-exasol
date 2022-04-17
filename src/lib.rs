@@ -31,7 +31,7 @@
 //!
 //! // Retrieving data associated with the result set.
 //! // A Vec of rows is returned, and the row type in this case will be Vec<String>.
-//! let data: Vec<Vec<String>> = exa_con.retrieve_rows(&mut result).unwrap();
+//! let data: Vec<Vec<String>> = exa_con.fetch_all(&mut result).unwrap();
 //! ```
 //!
 //! First 1000 rows get returned immediately and then data is retrieved in chunks in the [ResultSet]
@@ -67,7 +67,7 @@
 //!     // Only enough calls necessary to retrieve 100 rows will be made to the database.
 //!     // Any leftover data in the chunk will still be present in the ResultSet buffer.
 //!     // and can be used in later retrievals.
-//!     let data: Vec<(String, String, u16)> = exa_con.retrieve_nrows(&mut result, 100).unwrap();
+//!     let data: Vec<(String, String, u16)> = exa_con.fetch(&mut result, 100).unwrap();
 //!     // do stuff with data
 //!
 //!     counter += 1;
@@ -112,13 +112,13 @@
 //! let mut result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
 //!
 //! // Change the expected row type with the turbofish notation
-//! let mut data = exa_con.retrieve_nrows::<[u8; 2]>(&mut result, 1).unwrap();
+//! let mut data = exa_con.fetch::<[u8; 2]>(&mut result, 1).unwrap();
 //! let row1 = data[0];
 //!
 //! // You can also rely on type inference.
 //! // Nothing stops you from changing row types
 //! // on the same result set.
-//! let mut data: Vec<Vec<u8>> = exa_con.retrieve_nrows(&mut result, 1).unwrap();;
+//! let mut data: Vec<Vec<u8>> = exa_con.fetch(&mut result, 1).unwrap();;
 //! let row2 = data.pop();
 //!
 //! let mut result = exa_con.execute("SELECT 1 as col1, 2 as col2, 3 as col3 \
@@ -132,7 +132,7 @@
 //!     col3: u8,
 //! }
 //!
-//! let data = exa_con.retrieve_rows::<Test>(&mut result).unwrap();
+//! let data = exa_con.fetch_all::<Test>(&mut result).unwrap();
 //! for row in data {
 //!     // do stuff with row
 //! }

@@ -449,13 +449,13 @@ impl Connection {
     /// #
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
-    /// let data: Vec<Vec<String>> = exa_con.retrieve_rows(&mut result).unwrap();
+    /// let data: Vec<Vec<String>> = exa_con.fetch_all(&mut result).unwrap();
+    ///
+    /// let mut result2 = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
+    /// let data2: Vec<Vec<String>> = exa_con.fetch_all(&mut result2).unwrap();
     /// assert_eq!(data.len(), 2);
     /// ```
-    pub fn retrieve_rows<T: DeserializeOwned>(
-        &mut self,
-        result: &mut QueryResult,
-    ) -> Result<Vec<T>> {
+    pub fn fetch_all<T: DeserializeOwned>(&mut self, result: &mut QueryResult) -> Result<Vec<T>> {
         result
             .result_set_mut()
             .map(|rs| ResultSetIter::new(rs, self).collect())
@@ -463,7 +463,7 @@ impl Connection {
     }
 
     /// For a given mutable reference of a [QueryResult],
-    /// return at most n rows if the query produced a [ResultSet].
+    /// return `n` rows or the remainder in the result set, if the query produced a [ResultSet].
     /// Returns an empty `Vec` if there's no result set or it was all retrieved already.
     /// Automatically closes the result set if it was fully retrieved.
     /// ```
@@ -478,13 +478,13 @@ impl Connection {
     /// #
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
-    /// let data: Vec<Vec<String>> = exa_con.retrieve_nrows(&mut result, 1).unwrap();
+    /// let data: Vec<Vec<String>> = exa_con.fetch(&mut result, 1).unwrap();
     /// assert_eq!(data.len(), 1);
     ///
     /// // We're closing the underlying result set because we don't need it anymore.
     /// exa_con.close_result(result).unwrap();
     /// ```
-    pub fn retrieve_nrows<T: DeserializeOwned>(
+    pub fn fetch<T: DeserializeOwned>(
         &mut self,
         result: &mut QueryResult,
         n: usize,
