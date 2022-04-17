@@ -444,7 +444,7 @@ impl serde::Serialize for ColumnIteratorAdapter {
 /// let data: Vec<SomeRow1> = exa_con.fetch(&mut result1, 1).unwrap();
 /// // Due to the unsupported external tagging
 /// // deserialization this will error out:
-/// // let data: Vec<Val1> = exa_con.retrieve_nrows(&mut result1, 1).unwrap();
+/// // let data: Vec<Val1> = exa_con.fetch(&mut result1, 1).unwrap();
 ///
 /// // But internal tagging works
 /// let data: Vec<SomeRow2> = exa_con.fetch(&mut result2, 1).unwrap();

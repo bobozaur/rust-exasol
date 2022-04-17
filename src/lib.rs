@@ -35,9 +35,9 @@
 //! ```
 //!
 //! First 1000 rows get returned immediately and then data is retrieved in chunks in the [ResultSet]
-//! instance buffer and only concatenated in the [Connection::retrieve_rows] method.
+//! instance buffer and only concatenated in the [Connection::fetch_all] method.
 //! The buffer size can be changed either in the [ConOpts] or through the [Connection::set_fetch_size] method.
-//! A lazier approach can be employed by using [Connection::retrieve_nrows] instead, controlling
+//! A lazier approach can be employed by using [Connection::fetch] instead, controlling
 //! thus how many rows are returned.
 //!
 //! # Cleanup
@@ -75,7 +75,7 @@
 //!
 //! // Alternatively, you can retrieve row chunks while there still are rows in the result set.
 //! // while result.has_rows() {
-//!     // let data: Vec<(String, String, u16)> = exa_con.retrieve_nrows(&mut result, 100).unwrap();
+//!     // let data: Vec<(String, String, u16)> = exa_con.fetch(&mut result, 100).unwrap();
 //! // }
 //!
 //! // Failing to close the result here will leave it up to the
