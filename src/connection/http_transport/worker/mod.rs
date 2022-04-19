@@ -1,10 +1,8 @@
 use super::stream::MaybeTlsStream;
+use super::TRANSPORT_BUFFER_SIZE;
 use super::{ExaRowReader, ExaRowWriter, HttpTransportConfig, TransportResult};
 use crate::error::HttpTransportError;
 use crossbeam::channel::{Receiver, Sender};
-use csv::{Reader, WriterBuilder};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,23 +29,16 @@ const ERROR_HEADERS: &[u8; 57] = b"HTTP/1.1 500 Internal Server Error\r\n\
                                    Connection: close\r\n\
                                    \r\n";
 
-const WRITE_BUFFER_SIZE: usize = 65536;
-
 /// HTTP Transport export worker thread.
-pub struct HttpExportThread<T: DeserializeOwned> {
-    data_handler: Sender<T>,
+pub struct HttpExportThread {
+    data_handler: Sender<Vec<u8>>,
 }
 
-impl<T> HttpTransportWorker for HttpExportThread<T>
-where
-    T: DeserializeOwned + Send,
-{
-    type Channel = Sender<T>;
+impl HttpTransportWorker for HttpExportThread {
+    type Channel = Sender<Vec<u8>>;
 
-    fn new(channel: Self::Channel) -> Self {
-        Self {
-            data_handler: channel,
-        }
+    fn new(data_handler: Self::Channel) -> Self {
+        Self { data_handler }
     }
 
     fn process_data(
@@ -60,11 +51,14 @@ where
         Self::skip_headers(&mut reader, run)?;
 
         // Read all data in buffer.
-        let csv_reader = Reader::from_reader(ExaRowReader::new(reader, run, compression));
+        let mut processor = ExaRowReader::new(reader, compression);
+        let mut num_bytes = 1;
 
-        for row in csv_reader.into_deserialize() {
+        while num_bytes > 0 && run.load(Ordering::Acquire) {
+            let mut buf = Vec::with_capacity(TRANSPORT_BUFFER_SIZE);
+            num_bytes = processor.read_chunk(&mut buf)?;
             self.data_handler
-                .send(row?)
+                .send(buf)
                 .map_err(|_| HttpTransportError::SendError)?;
         }
 
@@ -92,19 +86,14 @@ where
 }
 
 /// HTTP Transport import worker thread.
-pub struct HttpImportThread<T: Serialize> {
-    data_handler: Receiver<T>,
+pub struct HttpImportThread {
+    data_handler: Receiver<Vec<u8>>,
 }
 
-impl<T> HttpTransportWorker for HttpImportThread<T>
-where
-    T: Serialize + Send,
-{
-    type Channel = Receiver<T>;
-    fn new(channel: Self::Channel) -> Self {
-        Self {
-            data_handler: channel,
-        }
+impl HttpTransportWorker for HttpImportThread {
+    type Channel = Receiver<Vec<u8>>;
+    fn new(data_handler: Self::Channel) -> Self {
+        Self { data_handler }
     }
 
     fn process_data(
@@ -119,16 +108,12 @@ where
         let stream = reader.into_inner();
         stream.write_all(SUCCESS_HEADERS)?;
 
-        let mut writer = WriterBuilder::new()
-            .has_headers(false)
-            .buffer_capacity(WRITE_BUFFER_SIZE)
-            .from_writer(ExaRowWriter::new(stream, run, compression));
+        let mut processor = ExaRowWriter::new(stream, compression);
 
-        for row in &self.data_handler {
-            writer.serialize(row)?
+        for chunk in &self.data_handler {
+            processor.write_chunk(chunk)?
         }
 
-        writer.flush()?;
         Ok(())
     }
 

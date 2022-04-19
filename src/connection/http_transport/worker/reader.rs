@@ -1,8 +1,6 @@
 #[cfg(feature = "flate2")]
 use flate2::read::GzDecoder;
 use std::io::{BufRead, ErrorKind, Read};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 const EXPECTED_DELIMITER: &[u8; 2] = b"\r\n";
 
@@ -10,23 +8,19 @@ const EXPECTED_DELIMITER: &[u8; 2] = b"\r\n";
 /// data chunk.
 /// We need a [BufRead] implementing type due to it's `read_line` method for reading the
 /// data chunk length.
-pub struct ExaRowReader<'a, R: Read + BufRead> {
+pub struct ExaRowReader<R: Read + BufRead> {
     buf_reader: R,
-    run: &'a Arc<AtomicBool>,
     compression: bool,
-    buf: Vec<u8>,
 }
 
-impl<'a, R> ExaRowReader<'a, R>
+impl<R> ExaRowReader<R>
 where
     R: Read + BufRead,
 {
-    pub fn new(buf_reader: R, run: &'a Arc<AtomicBool>, compression: bool) -> Self {
+    pub fn new(buf_reader: R, compression: bool) -> Self {
         Self {
             buf_reader,
-            run,
             compression,
-            buf: Vec::new(),
         }
     }
 
@@ -49,19 +43,14 @@ where
     /// how much the chunk will decompress.
     #[inline]
     #[allow(unreachable_code)]
-    fn store_chunk(&mut self, size: u64) -> std::io::Result<usize> {
+    fn store_chunk(&mut self, buf: &mut Vec<u8>, size: u64) -> std::io::Result<usize> {
         match self.compression {
-            false => self
-                .buf_reader
-                .by_ref()
-                .take(size)
-                .read_to_end(&mut self.buf),
+            false => self.buf_reader.by_ref().take(size).read_to_end(buf),
             true => {
                 #[cfg(feature = "flate2")]
                 return match size > 0 {
                     false => Ok(0),
-                    true => GzDecoder::new(self.buf_reader.by_ref().take(size))
-                        .read_to_end(&mut self.buf),
+                    true => GzDecoder::new(self.buf_reader.by_ref().take(size)).read_to_end(buf),
                 };
 
                 panic!("flate2 feature must be enabled to use compression");
@@ -70,10 +59,9 @@ where
     }
 
     /// Reads the length of the next chunk, the chunk itself, and the chunk delimiter.
-    #[inline]
-    fn read_chunk(&mut self) -> std::io::Result<usize> {
+    pub fn read_chunk(&mut self, buf: &mut Vec<u8>) -> std::io::Result<usize> {
         let size = self.read_chunk_size()?;
-        let num_bytes = self.store_chunk(size)?;
+        let num_bytes = self.store_chunk(buf, size)?;
         // Check chunk end for trailing delimiter
         let mut delimiter = [0; 2];
         self.buf_reader.read_exact(&mut delimiter)?;
@@ -90,31 +78,5 @@ where
         }?;
 
         Ok(num_bytes)
-    }
-}
-
-impl<'a, R> Read for ExaRowReader<'a, R>
-where
-    R: Read + BufRead,
-{
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // Read chunk
-        if self.run.load(Ordering::Acquire) {
-            // Check if we still have data in our inner buffer
-            if self.buf.is_empty() {
-                self.read_chunk()?;
-            }
-
-            // Read from inner buffer and consume bytes read.
-            let num_bytes = self.buf.as_slice().read(buf)?;
-            self.buf.drain(0..num_bytes);
-
-            Ok(num_bytes)
-        } else {
-            Err(std::io::Error::new(
-                ErrorKind::Other,
-                "Stop signal encountered",
-            ))
-        }
     }
 }

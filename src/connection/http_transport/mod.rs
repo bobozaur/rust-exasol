@@ -2,61 +2,129 @@ mod config;
 mod stream;
 mod worker;
 
+use super::TRANSPORT_BUFFER_SIZE;
 use crate::error::{DriverError, HttpTransportError, Result};
 use crate::Connection;
 use config::HttpTransportConfig;
 pub use config::HttpTransportOpts;
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::{IntoIter, Receiver, Sender};
 use crossbeam::thread::{Scope, ScopedJoinHandle};
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::marker::PhantomData;
+use std::io::{Error, ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use worker::reader::ExaRowReader;
 use worker::writer::ExaRowWriter;
 use worker::{HttpExportThread, HttpImportThread, HttpTransportWorker};
 
+pub struct ExaWriter {
+    sender: Sender<Vec<u8>>,
+    buf: Vec<u8>,
+}
+
+impl ExaWriter {
+    pub fn new(sender: Sender<Vec<u8>>) -> Self {
+        Self {
+            sender,
+            buf: Vec::with_capacity(TRANSPORT_BUFFER_SIZE),
+        }
+    }
+}
+
+impl Write for ExaWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buf.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut old_buf = Vec::with_capacity(TRANSPORT_BUFFER_SIZE);
+        std::mem::swap(&mut self.buf, &mut old_buf);
+        self.sender.send(old_buf).map_err(|_| {
+            Error::new(
+                ErrorKind::BrokenPipe,
+                "Could not send data chunk to worker thread",
+            )
+        })
+    }
+}
+
+pub struct ExaReader {
+    receiver: IntoIter<Vec<u8>>,
+    buf: Vec<u8>,
+    pos: usize,
+}
+
+impl ExaReader {
+    pub fn new(receiver: Receiver<Vec<u8>>) -> Self {
+        Self {
+            receiver: receiver.into_iter(),
+            buf: Vec::new(),
+            pos: 0,
+        }
+    }
+}
+
+impl Read for ExaReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut num_bytes = (&self.buf[self.pos..]).read(buf)?;
+
+        if num_bytes == 0 {
+            match self.receiver.next() {
+                None => num_bytes = 0,
+                Some(v) => {
+                    self.buf = v;
+                    self.pos = 0;
+                    num_bytes = (&self.buf[self.pos..]).read(buf)?;
+                }
+            }
+        }
+
+        self.pos += num_bytes;
+        Ok(num_bytes)
+    }
+}
+
 /// Convenience alias
 pub type TransportResult<T> = std::result::Result<T, HttpTransportError>;
 
-pub struct HttpExportJob<'a, Q: AsRef<str> + Serialize + Send, T: DeserializeOwned + Send> {
+pub struct HttpExportJob<'a, Q: AsRef<str> + Serialize + Send, T, F: FnOnce(ExaReader) -> T> {
     con: &'a mut Connection,
     query_or_table: Q,
     opts: Option<HttpTransportOpts>,
-    row_type: PhantomData<*const T>,
+    callback: Option<F>,
 }
 
-impl<'a, Q, T> HttpExportJob<'a, Q, T>
+impl<'a, Q, T, F> HttpExportJob<'a, Q, T, F>
 where
     Q: AsRef<str> + Serialize + Send,
-    T: DeserializeOwned + Send,
+    F: FnOnce(ExaReader) -> T,
 {
     pub fn new(
         con: &'a mut Connection,
         query_or_table: Q,
+        callback: F,
         opts: Option<HttpTransportOpts>,
     ) -> Self {
         Self {
             con,
             query_or_table,
             opts,
-            row_type: PhantomData,
+            callback: Some(callback),
         }
     }
 }
 
-impl<'a, Q, T> HttpTransportJob for HttpExportJob<'a, Q, T>
+impl<'a, Q, T, F> HttpTransportJob for HttpExportJob<'a, Q, T, F>
 where
     Q: AsRef<str> + Serialize + Send,
-    T: DeserializeOwned + Send,
+    F: FnOnce(ExaReader) -> T,
 {
-    type Worker = HttpExportThread<T>;
-    type DataHandler = Receiver<T>;
-    type Output = Vec<T>;
-    type Input = ();
+    type Worker = HttpExportThread;
+    type DataHandler = Receiver<Vec<u8>>;
+    type Callback = F;
+    type Output = T;
 
     fn generate_channel() -> (
         <Self::Worker as HttpTransportWorker>::Channel,
@@ -69,67 +137,56 @@ where
         format!("EXPORT ({}) INTO CSV\n{}", query_or_table, hosts)
     }
 
-    fn handle_data(
-        _input: Self::Input,
-        handler: Self::DataHandler,
-    ) -> TransportResult<Self::Output> {
-        Ok(handler.into_iter().collect())
+    fn handle_data(handler: Self::DataHandler, callback: Self::Callback) -> Self::Output {
+        let reader = ExaReader::new(handler);
+        callback(reader)
     }
 
     fn get_opts(&mut self) -> HttpTransportOpts {
         self.opts.take().unwrap_or_default()
     }
 
-    fn get_parts(&mut self) -> (&str, &mut Connection, Self::Input) {
-        (self.query_or_table.as_ref(), self.con, ())
+    fn get_parts(&mut self) -> (&str, &mut Connection, Option<Self::Callback>) {
+        (self.query_or_table.as_ref(), self.con, self.callback.take())
     }
 }
 
-pub struct HttpImportJob<
-    'a,
-    Q: AsRef<str> + Serialize + Send,
-    T: Serialize + Send,
-    I: IntoIterator<Item = T>,
-> {
+pub struct HttpImportJob<'a, Q: AsRef<str> + Serialize + Send, T, F: FnOnce(ExaWriter) -> T> {
     con: &'a mut Connection,
     table: Q,
-    data: Option<I>,
     opts: Option<HttpTransportOpts>,
-    row_type: PhantomData<*const T>,
+    callback: Option<F>,
 }
 
-impl<'a, Q, T, I> HttpImportJob<'a, Q, T, I>
+impl<'a, Q, T, F> HttpImportJob<'a, Q, T, F>
 where
     Q: AsRef<str> + Serialize + Send,
-    T: Serialize + Send,
-    I: IntoIterator<Item = T>,
+    F: FnOnce(ExaWriter) -> T,
 {
     pub fn new(
         con: &'a mut Connection,
         table: Q,
-        data: I,
+        callback: F,
         opts: Option<HttpTransportOpts>,
     ) -> Self {
         Self {
             con,
             table,
             opts,
-            data: Some(data),
-            row_type: PhantomData,
+            callback: Some(callback),
         }
     }
 }
 
-impl<'a, Q, T, I> HttpTransportJob for HttpImportJob<'a, Q, T, I>
+impl<'a, Q, T, F> HttpTransportJob for HttpImportJob<'a, Q, T, F>
 where
     Q: AsRef<str> + Serialize + Send,
-    T: Serialize + Send,
-    I: IntoIterator<Item = T>,
+    F: FnOnce(ExaWriter) -> T,
 {
-    type Worker = HttpImportThread<T>;
-    type DataHandler = Sender<T>;
-    type Output = ();
-    type Input = Option<I>;
+    type Worker = HttpImportThread;
+    type DataHandler = Sender<Vec<u8>>;
+    type Callback = F;
+    type Output = T;
 
     fn generate_channel() -> (
         <Self::Worker as HttpTransportWorker>::Channel,
@@ -143,32 +200,25 @@ where
         format!("IMPORT INTO {} FROM CSV\n{}", table, hosts)
     }
 
-    fn handle_data(
-        mut input: Self::Input,
-        handler: Self::DataHandler,
-    ) -> TransportResult<Self::Output> {
-        for row in input.take().into_iter().flatten() {
-            handler
-                .send(row)
-                .map_err(|_| HttpTransportError::SendError)?
-        }
-        Ok(())
+    fn handle_data(handler: Self::DataHandler, callback: Self::Callback) -> Self::Output {
+        let writer = ExaWriter::new(handler);
+        callback(writer)
     }
 
     fn get_opts(&mut self) -> HttpTransportOpts {
         self.opts.take().unwrap_or_default()
     }
 
-    fn get_parts(&mut self) -> (&str, &mut Connection, Self::Input) {
-        (self.table.as_ref(), self.con, self.data.take())
+    fn get_parts(&mut self) -> (&str, &mut Connection, Option<Self::Callback>) {
+        (self.table.as_ref(), self.con, self.callback.take())
     }
 }
 
 pub trait HttpTransportJob {
     type Worker: HttpTransportWorker;
     type DataHandler: Clone + Send;
+    type Callback;
     type Output;
-    type Input;
 
     fn generate_channel() -> (
         <Self::Worker as HttpTransportWorker>::Channel,
@@ -177,21 +227,20 @@ pub trait HttpTransportJob {
 
     fn generate_query(query_or_table: &str, hosts: String) -> String;
 
-    fn handle_data(input: Self::Input, handler: Self::DataHandler)
-        -> TransportResult<Self::Output>;
+    fn handle_data(handler: Self::DataHandler, callback: Self::Callback) -> Self::Output;
 
     /// Accessor for the underlying HTTP Transport options.
     fn get_opts(&mut self) -> HttpTransportOpts;
 
     /// Accessor for the underlying fields.
     /// Retrieved together to satisfy the borrow checker.
-    fn get_parts(&mut self) -> (&str, &mut Connection, Self::Input);
+    fn get_parts(&mut self) -> (&str, &mut Connection, Option<Self::Callback>);
 
     fn run(&mut self) -> Result<Self::Output> {
         let scope = crossbeam::scope(|s| {
             let (worker_channel, data_handler) = Self::generate_channel();
             let opts = self.get_opts();
-            let (qot, con, input) = self.get_parts();
+            let (qot, con, cb) = self.get_parts();
             let (hosts, num_threads) = Self::get_node_addresses(con, &opts)?;
 
             // Start orchestrator thread
@@ -199,7 +248,11 @@ pub trait HttpTransportJob {
                 Self::orchestrate(s, worker_channel, hosts, num_threads, opts, qot, con)
             });
 
-            let data_res = Self::map_result(Self::handle_data(input, data_handler));
+            let output = cb
+                .map(|callback| Self::handle_data(data_handler, callback))
+                .ok_or(HttpTransportError::ThreadError)
+                .map_err(DriverError::HttpTransportError)
+                .map_err(crate::error::Error::DriverError);
 
             // We join on the orchestrator handle
             // to check for errors or get the data it retrieved.
@@ -207,11 +260,11 @@ pub trait HttpTransportJob {
             // in the query, because the query will generally error out if there
             // was a thread error, but the reverse is not true.
             let res = handle.join().map_err(|_| HttpTransportError::ThreadError);
-            Self::map_result(res).and_then(|r| r).and(data_res)
+            map_transport_result(res).and_then(|r| r).and(output)
         });
 
         let res = scope.map_err(|_| HttpTransportError::ThreadError);
-        Self::map_result(res).and_then(|res| res)
+        map_transport_result(res).and_then(|res| res)
     }
 
     /// Orchestrator that will spawn worker threads
@@ -282,7 +335,7 @@ pub trait HttpTransportJob {
             .into_iter()
             .map(Self::join_handle)
             .fold(Ok(()), |_, r| r);
-        Self::map_result(res)
+        map_transport_result(res)
     }
 
     /// Joins on one worker handle
@@ -368,7 +421,7 @@ pub trait HttpTransportJob {
             .map(|i| Self::recv_address(prefix, ext, addr_receiver, i))
             .collect::<TransportResult<Vec<String>>>()
             .map(|v| v.join("\n"));
-        Self::map_result(res)
+        map_transport_result(res)
     }
 
     /// Wrapper that receives and parses an Exasol internal address
@@ -384,11 +437,11 @@ pub trait HttpTransportJob {
             .map(|s| format!("AT '{}://{}' FILE '{:0>3}.{}'", prefix, s, index, ext))?;
         Ok(addr)
     }
+}
 
-    /// Convenience method to map errors
-    #[inline]
-    fn map_result<T>(res: TransportResult<T>) -> Result<T> {
-        res.map_err(DriverError::HttpTransportError)
-            .map_err(From::from)
-    }
+/// Convenience function for mapping a transport result to the crate's main result type
+#[inline]
+fn map_transport_result<T>(res: TransportResult<T>) -> Result<T> {
+    res.map_err(DriverError::HttpTransportError)
+        .map_err(From::from)
 }

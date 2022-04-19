@@ -1,6 +1,8 @@
 use crate::con_opts::ConOpts;
-use crate::error::{ConnectionError, DriverError, RequestError, Result};
+use crate::connection::http_transport::{ExaReader, ExaWriter};
+use crate::error::{ConnectionError, DriverError, Error, HttpTransportError, RequestError, Result};
 use compress::MaybeCompressedWs;
+use csv::{Reader, Writer, WriterBuilder};
 use driver_attr::DriverAttributes;
 use exa_ws::ExaWebSocket;
 pub use http_transport::HttpTransportOpts;
@@ -20,6 +22,7 @@ use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
 use std::net::TcpStream;
 use std::ops::ControlFlow;
+use std::path::Path;
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 use url::Url;
 
@@ -30,6 +33,8 @@ mod http_transport;
 mod response;
 mod result;
 mod row;
+
+const TRANSPORT_BUFFER_SIZE: usize = 65536;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
@@ -510,20 +515,73 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result = exa_con.export("SELECT * FROM EXA_RUST_TEST LIMIT 1000", None).unwrap();
+    /// let result = exa_con.export_to_vec("SELECT * FROM EXA_RUST_TEST LIMIT 1000", None).unwrap();
     ///
     /// result.into_iter().take(5).for_each(|v: (String, String, u32)| println!("{:?}", v))
     /// ```
-    pub fn export<Q, T>(
+    pub fn export_to_vec<Q, T>(
         &mut self,
         query_or_table: Q,
         opts: Option<HttpTransportOpts>,
     ) -> Result<Vec<T>>
     where
         Q: AsRef<str> + Serialize + Send,
-        T: DeserializeOwned + Send,
+        T: DeserializeOwned,
     {
-        HttpExportJob::new(self, query_or_table, opts).run()
+        let closure = |reader: ExaReader| {
+            let csv_reader = Reader::from_reader(reader);
+            let res = csv_reader
+                .into_deserialize()
+                .collect::<csv::Result<Vec<T>>>();
+
+            map_csv_result(res)
+        };
+
+        self.export_to_closure(query_or_table, closure, opts)
+            .and_then(|r| r)
+    }
+
+    pub fn export_to_file<Q, P>(
+        &mut self,
+        query_or_table: Q,
+        path: P,
+        opts: Option<HttpTransportOpts>,
+    ) -> Result<()>
+    where
+        Q: AsRef<str> + Serialize + Send,
+        P: AsRef<Path>,
+    {
+        let closure = |reader: ExaReader| {
+            let mut csv_reader = Reader::from_reader(reader);
+            let res = Writer::from_path(path).and_then(|mut csv_writer| {
+                let header = csv_reader.byte_headers()?;
+                csv_writer.write_byte_record(header)?;
+
+                for res in csv_reader.into_byte_records() {
+                    let rec = res?;
+                    csv_writer.write_byte_record(&rec)?;
+                }
+                Ok(())
+            });
+
+            map_csv_result(res)
+        };
+
+        self.export_to_closure(query_or_table, closure, opts)
+            .and_then(|r| r)
+    }
+
+    pub fn export_to_closure<Q, F, T>(
+        &mut self,
+        query_or_table: Q,
+        callback: F,
+        opts: Option<HttpTransportOpts>,
+    ) -> Result<T>
+    where
+        Q: AsRef<str> + Serialize + Send,
+        F: FnOnce(ExaReader) -> T,
+    {
+        HttpExportJob::new(self, query_or_table, callback, opts).run()
     }
 
     /// HTTP Transport import into a table from a Rust type implementing [IntoIterator].
@@ -541,21 +599,81 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result: Vec<(String, String, u32)> = exa_con.export("SELECT * FROM EXA_RUST_TEST LIMIT 1000", None).unwrap();
-    /// exa_con.import("EXA_RUST_TEST", result, None).unwrap();
+    /// let result: Vec<(String, String, u32)> = exa_con.export_to_vec("SELECT * FROM EXA_RUST_TEST LIMIT 1000", None).unwrap();
+    /// exa_con.import_from_iter("EXA_RUST_TEST", result, None).unwrap();
     /// ```
-    pub fn import<Q, T, I>(
+    pub fn import_from_iter<Q, I, T>(
         &mut self,
         table: Q,
-        data: I,
+        iter: I,
         opts: Option<HttpTransportOpts>,
     ) -> Result<()>
     where
         Q: AsRef<str> + Serialize + Send,
-        T: Serialize + Send,
         I: IntoIterator<Item = T>,
+        T: Serialize,
     {
-        HttpImportJob::new(self, table, data, opts).run()
+        let closure = |writer: ExaWriter| {
+            let mut csv_writer = WriterBuilder::new()
+                .has_headers(false)
+                .buffer_capacity(TRANSPORT_BUFFER_SIZE)
+                .from_writer(writer);
+
+            let res = iter.into_iter().fold(Ok(()), |_, item| {
+                csv_writer.serialize(item)?;
+                Ok(())
+            });
+
+            map_csv_result(res)
+        };
+
+        self.import_from_closure(table, closure, opts)
+            .and_then(|r| r)
+    }
+
+    pub fn import_from_file<Q, P>(
+        &mut self,
+        table: Q,
+        path: P,
+        opts: Option<HttpTransportOpts>,
+    ) -> Result<()>
+    where
+        Q: AsRef<str> + Serialize + Send,
+        P: AsRef<Path>,
+    {
+        let closure = |writer: ExaWriter| {
+            let mut csv_writer = WriterBuilder::new()
+                .has_headers(false)
+                .buffer_capacity(TRANSPORT_BUFFER_SIZE)
+                .from_writer(writer);
+
+            let res = Reader::from_path(path).and_then(|csv_reader| {
+                for res in csv_reader.into_byte_records() {
+                    let rec = res?;
+                    csv_writer.write_byte_record(&rec)?;
+                }
+
+                Ok(())
+            });
+
+            map_csv_result(res)
+        };
+
+        self.import_from_closure(table, closure, opts)
+            .and_then(|r| r)
+    }
+
+    pub fn import_from_closure<Q, F, T>(
+        &mut self,
+        table: Q,
+        callback: F,
+        opts: Option<HttpTransportOpts>,
+    ) -> Result<T>
+    where
+        Q: AsRef<str> + Serialize + Send,
+        F: FnOnce(ExaWriter) -> T,
+    {
+        HttpImportJob::new(self, table, callback, opts).run()
     }
 
     /// Creates a prepared statement of type [PreparedStatement].
@@ -953,4 +1071,12 @@ impl Connection {
     fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
         self.ws.do_request(payload)
     }
+}
+
+/// Convenience function for mapping a CSV Result to the crate's result type.
+#[inline]
+fn map_csv_result<T>(res: csv::Result<T>) -> Result<T> {
+    res.map_err(HttpTransportError::CSVError)
+        .map_err(DriverError::HttpTransportError)
+        .map_err(Error::DriverError)
 }

@@ -29,7 +29,7 @@ mod tests {
 
         let http_opts = HttpTransportOpts::new(1, true, false);
         let data: Vec<(String, String, u16)> = exa_con
-            .export(
+            .export_to_vec(
                 "SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001",
                 Some(http_opts),
             )
@@ -37,7 +37,7 @@ mod tests {
 
         let http_opts = HttpTransportOpts::new(1, true, false);
         exa_con
-            .import("RUST.EXA_RUST_TEST", data, Some(http_opts))
+            .import_from_iter("RUST.EXA_RUST_TEST", data, Some(http_opts))
             .unwrap();
     }
 }
