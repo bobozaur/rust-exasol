@@ -75,7 +75,7 @@ where
     /// hence we tap into the inner stream
     fn flush(&mut self) -> std::io::Result<()> {
         if self.run.load(Ordering::Acquire) {
-            if self.buf.len() > 0 {
+            if !self.buf.is_empty() {
                 let len = format!("{:X}", self.buf.len());
                 self.stream.write_all(len.as_bytes())?;
                 self.stream.write_all(b"\r\n")?;

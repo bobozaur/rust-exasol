@@ -1,6 +1,6 @@
 #[cfg(feature = "flate2")]
 use flate2::read::GzDecoder;
-use std::io::{BufRead, ErrorKind, Read, Write};
+use std::io::{BufRead, ErrorKind, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -101,7 +101,7 @@ where
         // Read chunk
         if self.run.load(Ordering::Acquire) {
             // Check if we still have data in our inner buffer
-            if self.buf.len() == 0 {
+            if self.buf.is_empty() {
                 self.read_chunk()?;
             }
 
