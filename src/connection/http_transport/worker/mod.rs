@@ -1,4 +1,4 @@
-use super::stream::{MaybeCompressedStream, MaybeTlsStream};
+use super::stream::MaybeTlsStream;
 use super::{ExaRowReader, ExaRowWriter, HttpTransportConfig, TransportResult};
 use crate::error::HttpTransportError;
 use crossbeam::channel::{Receiver, Sender};
@@ -52,14 +52,15 @@ where
 
     fn process_data(
         &mut self,
-        stream: &mut MaybeCompressedStream,
+        stream: &mut MaybeTlsStream,
         run: &Arc<AtomicBool>,
+        compression: bool,
     ) -> TransportResult<()> {
-        let mut reader = ExaRowReader::new(stream, run);
+        let mut reader = BufReader::new(stream);
+        Self::skip_headers(&mut reader, run)?;
 
         // Read all data in buffer.
-        Self::skip_headers(&mut reader, run)?;
-        let csv_reader = Reader::from_reader(reader);
+        let csv_reader = Reader::from_reader(ExaRowReader::new(reader, run, compression));
 
         for row in csv_reader.into_deserialize() {
             self.data_handler
@@ -70,7 +71,7 @@ where
         Ok(())
     }
 
-    fn success(stream: &mut MaybeCompressedStream) -> TransportResult<()> {
+    fn success(stream: &mut MaybeTlsStream) -> TransportResult<()> {
         stream
             .write_all(SUCCESS_HEADERS)
             .and(stream.write_all(END_PACKET))
@@ -80,7 +81,7 @@ where
     // When doing an EXPORT an error also has to be signaled
     // to Exasol by sending the error headers.
     fn error(
-        stream: &mut MaybeCompressedStream,
+        stream: &mut MaybeTlsStream,
         error: HttpTransportError,
         run: &Arc<AtomicBool>,
     ) -> TransportResult<()> {
@@ -108,19 +109,20 @@ where
 
     fn process_data(
         &mut self,
-        mut stream: &mut MaybeCompressedStream,
+        stream: &mut MaybeTlsStream,
         run: &Arc<AtomicBool>,
+        compression: bool,
     ) -> TransportResult<()> {
         let mut reader = BufReader::new(stream);
         Self::skip_headers(&mut reader, run)?;
 
-        stream = reader.into_inner();
+        let stream = reader.into_inner();
         stream.write_all(SUCCESS_HEADERS)?;
 
         let mut writer = WriterBuilder::new()
             .has_headers(false)
             .buffer_capacity(WRITE_BUFFER_SIZE)
-            .from_writer(ExaRowWriter::new(stream, run));
+            .from_writer(ExaRowWriter::new(stream, run, compression));
 
         for row in &self.data_handler {
             writer.serialize(row)?
@@ -130,7 +132,7 @@ where
         Ok(())
     }
 
-    fn success(stream: &mut MaybeCompressedStream) -> TransportResult<()> {
+    fn success(stream: &mut MaybeTlsStream) -> TransportResult<()> {
         stream
             .write_all(END_PACKET)
             .map_err(HttpTransportError::IoError)
@@ -140,7 +142,7 @@ where
     // So simply dropping the socket connection later will suffice.
     // No special action is required.
     fn error(
-        _stream: &mut MaybeCompressedStream,
+        _stream: &mut MaybeTlsStream,
         error: HttpTransportError,
         run: &Arc<AtomicBool>,
     ) -> TransportResult<()> {
@@ -160,16 +162,17 @@ pub trait HttpTransportWorker {
     /// Method to overwrite to IMPORT/EXPORT data.
     fn process_data(
         &mut self,
-        stream: &mut MaybeCompressedStream,
+        stream: &mut MaybeTlsStream,
         run: &Arc<AtomicBool>,
+        compression: bool,
     ) -> TransportResult<()>;
 
     /// Defines success behaviour
-    fn success(stream: &mut MaybeCompressedStream) -> TransportResult<()>;
+    fn success(stream: &mut MaybeTlsStream) -> TransportResult<()>;
 
     /// Defines error behaviour
     fn error(
-        stream: &mut MaybeCompressedStream,
+        stream: &mut MaybeTlsStream,
         error: HttpTransportError,
         run: &Arc<AtomicBool>,
     ) -> TransportResult<()>;
@@ -189,8 +192,8 @@ pub trait HttpTransportWorker {
 
         // Do actual data processing.
         let socket = socket
-            .and_then(|stream| Self::promote(stream, config.encryption, config.compression))
-            .and_then(|stream| self.transport(stream, config.run));
+            .and_then(|stream| Self::promote(stream, config.encryption))
+            .and_then(|stream| self.transport(stream, config.run, config.compression));
 
         // Wait for query execution to end before dropping the socket.
         config.barrier.wait();
@@ -230,12 +233,13 @@ pub trait HttpTransportWorker {
     /// We return the socket to avoid dropping it yet.
     fn transport(
         &mut self,
-        mut stream: MaybeCompressedStream,
+        mut stream: MaybeTlsStream,
         run: Arc<AtomicBool>,
-    ) -> TransportResult<MaybeCompressedStream> {
+        compression: bool,
+    ) -> TransportResult<MaybeTlsStream> {
         let res = match run.load(Ordering::Acquire) {
             false => Err(HttpTransportError::ThreadError),
-            true => self.process_data(&mut stream, &run),
+            true => self.process_data(&mut stream, &run, compression),
         };
 
         match res {
@@ -265,13 +269,8 @@ pub trait HttpTransportWorker {
     }
 
     /// Promotes stream to TLS and adds compression as needed
-    fn promote(
-        stream: TcpStream,
-        encryption: bool,
-        compression: bool,
-    ) -> TransportResult<MaybeCompressedStream> {
+    fn promote(stream: TcpStream, encryption: bool) -> TransportResult<MaybeTlsStream> {
         MaybeTlsStream::wrap(stream, encryption)
-            .map(|tls_stream| MaybeCompressedStream::new(tls_stream, compression))
     }
 
     /// Parses response to return the internal Exasol address

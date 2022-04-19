@@ -66,7 +66,7 @@ where
     }
 
     fn generate_query(query_or_table: &str, hosts: String) -> String {
-        format!("EXPORT {} INTO CSV\n{}", query_or_table, hosts)
+        format!("EXPORT ({}) INTO CSV\n{}", query_or_table, hosts)
     }
 
     fn handle_data(
@@ -233,24 +233,23 @@ pub trait HttpTransportJob {
         let run = Arc::new(AtomicBool::new(true));
         let barrier = Arc::new(Barrier::new(num_threads + 1));
         let (addr_sender, addr_receiver) = crossbeam::channel::bounded(num_threads);
+        let use_encryption = opts.encryption();
+        let use_compression = opts.compression();
         let configs = HttpTransportConfig::generate(
             hosts,
             barrier.clone(),
             run.clone(),
             addr_sender,
-            opts.encryption(),
-            opts.compression(),
+            use_encryption,
+            use_compression,
         );
 
         // Start worker threads
         let handles = Self::start_workers(s, configs, num_threads, worker_channel);
 
         // Generate makeshift IMPORT/EXPORT filenames and locations
-        let schema = match opts.encryption() {
-            false => "http",
-            true => "https",
-        };
-        let filenames = Self::generate_filenames(schema, num_threads, &addr_receiver);
+        let filenames =
+            Self::generate_filenames(use_encryption, use_compression, num_threads, &addr_receiver);
 
         // Signal threads to stop if there was an error
         // on the orchestrator thread side
@@ -349,13 +348,24 @@ pub trait HttpTransportJob {
     /// each worker socket connection.
     /// These will be used in generating the filename part of the query.
     fn generate_filenames(
-        schema: &str,
+        use_encryption: bool,
+        use_compression: bool,
         num_threads: usize,
         addr_receiver: &Receiver<String>,
     ) -> Result<String> {
+        let prefix = match use_encryption {
+            false => "http",
+            true => "https",
+        };
+
+        let ext = match use_compression {
+            false => "csv",
+            true => "gz",
+        };
+
         let res = (0..num_threads)
             .into_iter()
-            .map(|i| Self::recv_address(schema, addr_receiver, i))
+            .map(|i| Self::recv_address(prefix, ext, addr_receiver, i))
             .collect::<TransportResult<Vec<String>>>()
             .map(|v| v.join("\n"));
         Self::map_result(res)
@@ -364,13 +374,14 @@ pub trait HttpTransportJob {
     /// Wrapper that receives and parses an Exasol internal address
     #[inline]
     fn recv_address(
-        schema: &str,
+        prefix: &str,
+        ext: &str,
         receiver: &Receiver<String>,
         index: usize,
     ) -> TransportResult<String> {
         let addr = receiver
             .recv()
-            .map(|s| format!("AT '{}://{}' FILE '{:0>3}.CSV'", schema, s, index))?;
+            .map(|s| format!("AT '{}://{}' FILE '{:0>3}.{}'", prefix, s, index, ext))?;
         Ok(addr)
     }
 

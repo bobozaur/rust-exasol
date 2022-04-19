@@ -7,8 +7,6 @@ use __native_tls::{Identity, TlsAcceptor, TlsStream};
 use __rustls::{
     Certificate as RustlsCert, PrivateKey, ServerConfig, ServerConnection, StreamOwned,
 };
-#[cfg(feature = "flate2")]
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
 use rcgen::{Certificate, CertificateParams, KeyPair, PKCS_RSA_SHA256};
 #[cfg(any(feature = "native-tls", feature = "rustls"))]
@@ -21,60 +19,6 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 #[cfg(feature = "rustls")]
 use std::sync::Arc;
-
-pub enum MaybeCompressedStream {
-    /// Socket with no compression
-    Plain(MaybeTlsStream),
-    #[cfg(feature = "flate2")]
-    /// Socket with GZip compression
-    Compressed(MaybeTlsStream),
-}
-
-impl MaybeCompressedStream {
-    /// Creates a new stream from the underlying stream
-    pub fn new(stream: MaybeTlsStream, compression: bool) -> Self {
-        match compression {
-            false => MaybeCompressedStream::Plain(stream),
-            true => {
-                #[cfg(feature = "flate2")]
-                return MaybeCompressedStream::Compressed(stream);
-
-                // Shouldn't ever reach this, but just in case:
-                panic!("Compression enabled without flate2 feature!")
-            }
-        }
-    }
-}
-
-impl Read for MaybeCompressedStream {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            MaybeCompressedStream::Plain(ref mut s) => s.read(buf),
-            #[cfg(feature = "flate2")]
-            MaybeCompressedStream::Compressed(ref mut s) => GzDecoder::new(s).read(buf),
-        }
-    }
-}
-
-impl Write for MaybeCompressedStream {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self {
-            MaybeCompressedStream::Plain(ref mut s) => s.write(buf),
-            #[cfg(feature = "flate2")]
-            MaybeCompressedStream::Compressed(ref mut s) => {
-                GzEncoder::new(s, Compression::default()).write(buf)
-            }
-        }
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        match self {
-            MaybeCompressedStream::Plain(ref mut s) => s.flush(),
-            #[cfg(feature = "flate2")]
-            MaybeCompressedStream::Compressed(ref mut s) => s.flush(),
-        }
-    }
-}
 
 /// A stream that might be protected with TLS.
 pub enum MaybeTlsStream {

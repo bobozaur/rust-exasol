@@ -1,4 +1,6 @@
 #[cfg(feature = "flate2")]
+use crate::error::RequestError;
+#[cfg(feature = "flate2")]
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 #[cfg(feature = "flate2")]
 use std::io::Write;
@@ -18,6 +20,7 @@ pub enum MaybeCompressedWs {
 
 impl MaybeCompressedWs {
     /// Consumes self to return a variant that might use compression
+    #[allow(unreachable_code)]
     pub fn enable_compression(self, compression: bool) -> Self {
         if compression {
             #[cfg(feature = "flate2")]
@@ -47,14 +50,12 @@ impl MaybeCompressedWs {
             MaybeCompressedWs::Compressed(ws) => {
                 let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
 
-                enc.write_all(payload.to_string().as_bytes())
-                    .and(enc.finish())
-                    .and_then(|message| {
-                        ws.write_message(Message::Binary(message))
-                            .map_err(RequestError::WebsocketError)
-                    });
+                let message = enc
+                    .write_all(payload.to_string().as_bytes())
+                    .and(enc.finish())?;
 
-                Ok(())
+                ws.write_message(Message::Binary(message))
+                    .map_err(RequestError::WebsocketError)
             }
         }
     }
