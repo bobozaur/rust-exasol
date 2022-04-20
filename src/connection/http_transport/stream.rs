@@ -74,7 +74,7 @@ impl MaybeTlsStream {
         let key = cert.serialize_private_key_pem();
 
         let ident = Identity::from_pkcs8(tls_cert.as_bytes(), key.as_bytes())?;
-        let mut connector = TlsAcceptor::new(ident)?;
+        let connector = TlsAcceptor::new(ident)?;
         let stream = connector
             .accept(socket)
             .map_err(|_| HttpTransportError::HandshakeError)?;

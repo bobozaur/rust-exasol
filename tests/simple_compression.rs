@@ -1,8 +1,11 @@
 //! Tests unencrypted compression support
+//! included fingerprint in the DSN, but since we're not using encryption it will just
+//! be discarded.
 
 #[cfg(test)]
 #[allow(unused)]
 mod tests {
+    use exasol::error::Result;
     use exasol::*;
     use std::env;
 
@@ -21,11 +24,14 @@ mod tests {
         opts.set_compression(true);
 
         let mut exa_con = Connection::new(opts).unwrap();
-        // let mut result = exa_con
-        //     .execute("SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001;")
-        //     .unwrap();
-        //
-        // let rows: Vec<(String, String, u16)> = exa_con.iter_result(&mut result).unwrap();
+        let mut result = exa_con
+            .execute("SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001;")
+            .unwrap();
+
+        let rows: Vec<(String, String, u16)> = exa_con
+            .iter_result(&mut result)
+            .collect::<Result<_>>()
+            .unwrap();
 
         let http_opts = HttpTransportOpts::new(1, true, false);
         let data: Vec<(String, String, u16)> = exa_con

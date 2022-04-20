@@ -94,7 +94,7 @@ pub enum ConnectionError {
     #[error(transparent)]
     PKCS1Error(#[from] rsa::pkcs1::Error),
     #[error("The fingerprint in the DSN and the server fingerprint do not match: {0:?} - {1:?}")]
-    FingerprintMismatch(Vec<u8>, Vec<u8>),
+    FingerprintMismatch(String, String),
     #[error(transparent)]
     WebsocketError(#[from] tungstenite::error::Error),
     #[error(transparent)]

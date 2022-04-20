@@ -7,6 +7,7 @@ use rsa::RsaPublicKey;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::net::TcpStream;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
@@ -86,22 +87,32 @@ impl ExaWebSocket {
         Ok(data)
     }
 
-    /// Validates the server fingerprint
+    /// Validates the DSN fingerprint.
     pub fn validate_fingerprint(&mut self, fingerprint: String) -> ConResult<()> {
-        let fingerprint = fingerprint.as_bytes().to_vec();
+        // The fingerprint is already a HEX string, so we just print it.
+        let fingerprint = fingerprint.to_uppercase();
         let server_fp = self
             .peer_certificate()
             .and_then(|cert| cert.as_bytes())
             .map(|v| {
                 let mut hasher = Sha256::new();
                 hasher.update(v.as_slice());
-                hasher.finalize().to_vec()
+                let mut output = String::with_capacity(fingerprint.len());
+                for byte in hasher.finalize() {
+                    write!(&mut output, "{:02X}", byte).ok()?
+                }
+                Some(output)
             })
-            .unwrap_or_default();
+            .and_then(|s| s);
 
-        match fingerprint == server_fp {
-            true => Ok(()),
-            false => Err(ConnectionError::FingerprintMismatch(fingerprint, server_fp)),
+        // If encryption is not enabled the server won't return a certificate,
+        // so we just return Ok(()) in that case.
+        match server_fp {
+            None => Ok(()),
+            Some(fp) => match fingerprint == fp {
+                true => Ok(()),
+                false => Err(ConnectionError::FingerprintMismatch(fingerprint, fp)),
+            },
         }
     }
 
