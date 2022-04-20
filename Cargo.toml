@@ -23,11 +23,16 @@ thiserror = "1.0.30"
 csv = "1.1.6"
 crossbeam = "0.8.1"
 rsa = "0.6.1"
+sha2 = "0.10.2"
 rcgen = { version = "0.9.2", features = ["pem"], optional = true }
-__native-tls = { version = "0.2.10", optional = true, package = "native-tls"}
+__native_tls = { version = "0.2.10", optional = true, package = "native-tls"}
 __rustls = {version = "0.20.4", optional = true , package = "rustls"}
 flate2 = { version = "1.0.22", optional = true }
 
 [features]
-native-tls = ["tungstenite/native-tls", "rcgen", "__native-tls"]
-rustls = ["tungstenite/rustls", "rcgen", "__rustls"]
+native-tls-basic = ["rcgen", "__native_tls"]
+rustls = ["rcgen", "__rustls"]
+native-tls = ["tungstenite/native-tls", "native-tls-basic"]
+native-tls-vendored = ["tungstenite/native-tls-vendored", "native-tls-basic"]
+rustls-tls-webpki-roots = ["tungstenite/rustls-tls-webpki-roots", "rustls"]
+rustls-tls-native-roots = ["tungstenite/rustls-tls-native-roots", "rustls"]

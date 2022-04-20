@@ -21,11 +21,11 @@ mod tests {
         opts.set_compression(true);
 
         let mut exa_con = Connection::new(opts).unwrap();
-        let mut result = exa_con
-            .execute("SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001;")
-            .unwrap();
-
-        let rows: Vec<(String, String, u16)> = exa_con.iter_result(&mut result).unwrap();
+        // let mut result = exa_con
+        //     .execute("SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001;")
+        //     .unwrap();
+        //
+        // let rows: Vec<(String, String, u16)> = exa_con.iter_result(&mut result).unwrap();
 
         let http_opts = HttpTransportOpts::new(1, true, false);
         let data: Vec<(String, String, u16)> = exa_con

@@ -25,8 +25,11 @@ use std::net::TcpStream;
 use std::ops::ControlFlow;
 use std::option::IntoIter;
 use std::path::Path;
-use tls_connector::ConResult;
-pub use tls_connector::TlsConnector;
+use tls_cert::Certificate;
+#[cfg(any(feature = "rustls", feature = "native-tls-basic"))]
+use tungstenite::client_tls_with_config;
+#[cfg(any(feature = "rustls", feature = "native-tls-basic"))]
+pub use tungstenite::Connector;
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
 
 mod compress;
@@ -36,14 +39,16 @@ mod http_transport;
 mod response;
 mod result;
 mod row;
-mod tls_connector;
+mod tls_cert;
 
 const TRANSPORT_BUFFER_SIZE: usize = 65536;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
+type ConResult<T> = std::result::Result<T, ConnectionError>;
 type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
 type WsAddr = (Ws, String, u16);
+type WsParts = (WsAddr, Option<String>);
 
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
@@ -174,12 +179,25 @@ impl Connection {
     /// This method gives more control over how the TLS connection is established,
     /// e.g: you would use this if you want to rely on a self-signed certificate,
     /// or a custom root store.
-    #[cfg(any(feature = "native-tls", feature = "rustls"))]
-    pub fn from_connector(connector: TlsConnector, mut opts: ConOpts) -> Result<Connection> {
+    #[cfg(any(feature = "native-tls-basic", feature = "rustls"))]
+    pub fn from_connector(connector: Connector, mut opts: ConOpts) -> Result<Connection> {
         // Cloning the connector is necessary because we'll call this closure
         // once for each IP resolved from the DSN, in case a range was provided.
-        let cb =
-            |prefix: &str, addr: &str, port: u16| connector.clone().connect(prefix, addr, port);
+        let cb = |prefix: &str, addr: &str, port: u16| {
+            let ws_addr = format!("{}://{}:{}/", prefix, addr, port);
+            let stream = TcpStream::connect(format!("{}:{}", addr, port))?;
+            // Manually cloning because Connector does not implement Clone.
+            let connector = match &connector {
+                #[cfg(feature = "native-tls-basic")]
+                Connector::NativeTls(con) => Connector::NativeTls(con.clone()),
+
+                #[cfg(feature = "rustls")]
+                Connector::Rustls(con) => Connector::Rustls(con.clone()),
+                _ => Connector::Plain,
+            };
+            let (ws, _) = client_tls_with_config(ws_addr, stream, None, Some(connector))?;
+            Ok(ws)
+        };
 
         opts.set_encryption(true);
         Self::create(cb, opts)
@@ -990,7 +1008,8 @@ impl Connection {
         F: Fn(&str, &str, u16) -> ConResult<Ws>,
     {
         let parts = Self::ws_from_closure(&mut cb, &opts).map_err(DriverError::ConnectionError)?;
-        let (ws, addr, port) = parts;
+        let (ws_addr, fingerprint) = parts;
+        let (ws, addr, port) = ws_addr;
 
         let driver_attr = DriverAttributes {
             port,
@@ -999,7 +1018,12 @@ impl Connection {
             lowercase_columns: opts.lowercase_columns(),
         };
 
-        let ws = ExaWebSocket::new(ws, opts)?;
+        let mut ws = ExaWebSocket::new(ws, opts)?;
+
+        fingerprint
+            .map(|fp| ws.validate_fingerprint(fp))
+            .unwrap_or(Ok(()))
+            .map_err(DriverError::ConnectionError)?;
 
         let mut con = Self {
             rs_handles: HashSet::new(),
@@ -1060,24 +1084,20 @@ impl Connection {
     /// We'll get the list of IP addresses resulted from parsing and resolving the DSN
     /// Then loop through all of them (max once each) until a connection is established.
     /// Login is attempted afterwards.
-    fn ws_from_closure<F>(
-        cb: &mut F,
-        opts: &ConOpts,
-    ) -> std::result::Result<WsAddr, ConnectionError>
+    fn ws_from_closure<F>(cb: &mut F, opts: &ConOpts) -> ConResult<WsParts>
     where
         F: Fn(&str, &str, u16) -> ConResult<Ws>,
     {
-        let addresses = opts.parse_dsn()?;
+        let mut addresses = opts.parse_dsn()?;
+        let fingerprint = addresses.take_fingerprint();
         let prefix = opts.ws_prefix();
 
-        let cf = addresses
-            .into_iter()
-            .try_fold(ConnectionError::InvalidDSN, |_, (addr, port)| {
-                Self::connect_ws(cb, prefix, addr, port)
-            });
+        let cf = addresses.try_fold(ConnectionError::InvalidDSN, |_, (addr, port)| {
+            Self::connect_ws(cb, prefix, addr, port)
+        });
 
         match cf {
-            ControlFlow::Break(ws) => Ok(ws),
+            ControlFlow::Break(ws) => Ok((ws, fingerprint)),
             ControlFlow::Continue(e) => Err(e),
         }
     }

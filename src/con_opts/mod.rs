@@ -1,17 +1,17 @@
+mod address;
 mod protocol_version;
+
 use crate::error::ConnectionError;
+use address::AddressList;
 use lazy_regex::regex;
 pub use protocol_version::ProtocolVersion;
 use rand::rngs::OsRng;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use regex::Captures;
 use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
 use serde_json::{json, Value};
 use std::env;
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::net::{SocketAddr, ToSocketAddrs};
 
 // Convenience alias
 type ConResult<T> = std::result::Result<T, ConnectionError>;
@@ -75,7 +75,6 @@ impl Display for InnerOpts {
 impl Default for InnerOpts {
     fn default() -> Self {
         let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "UNKNOWN".to_owned());
-        let use_encryption = cfg!(any(feature = "native-tls", feature = "rustls"));
 
         Self {
             dsn: None,
@@ -89,7 +88,7 @@ impl Default for InnerOpts {
             client_os: env::consts::OS.to_owned(),
             fetch_size: 5 * 1024 * 1024,
             query_timeout: 0,
-            use_encryption,
+            use_encryption: false,
             use_compression: false,
             lowercase_columns: true,
             autocommit: true,
@@ -102,7 +101,7 @@ impl Default for InnerOpts {
 /// the port field in this struct is used as a fallback.
 ///
 /// Default is implemented for [ConOpts] so that most fields have fallback values.
-/// DSN, user, password and schema fields are practically mandatory,
+/// DSN, user, and password fields are practically mandatory,
 /// as they otherwise default to an empty string or JSON null.
 /// ```
 ///  use exasol::ConOpts;
@@ -240,7 +239,7 @@ impl ConOpts {
     #[inline]
     #[allow(unused)]
     pub fn set_encryption(&mut self, flag: bool) {
-        if cfg!(any(feature = "native-tls", feature = "rustls")) {
+        if cfg!(any(feature = "native-tls-basic", feature = "rustls")) {
             self.0.use_encryption = flag;
         } else {
             panic!("native-tls or rustls features must be enabled to set encryption")
@@ -299,7 +298,7 @@ impl ConOpts {
     /// Parses the provided DSN to expand ranges and resolve IP addresses.
     /// Connection to all nodes will then be attempted in a random order
     /// until one is successful or all failed.
-    pub(crate) fn parse_dsn(&self) -> ConResult<Vec<(String, u16)>> {
+    pub(crate) fn parse_dsn(&self) -> ConResult<AddressList> {
         let re = regex!(
             r"(?x)
                     ^(.+?)                     # Hostname prefix
@@ -320,7 +319,7 @@ impl ConOpts {
                 let start_range = Self::parse_dsn_part(&cap, 2);
                 let end_range = Self::parse_dsn_part(&cap, 3);
                 let hostname_suffix = Self::parse_dsn_part(&cap, 4);
-                let _fingerprint = Self::parse_dsn_part(&cap, 5);
+                let fingerprint = Self::parse_dsn_part(&cap, 5).to_owned();
                 let port = Self::parse_dsn_part(&cap, 6)
                     .parse::<u16>()
                     .unwrap_or(self.0.port);
@@ -346,18 +345,7 @@ impl ConOpts {
                     }
                 }
 
-                // Now we have to resolve hostnames to IPs
-                let mut addresses = hosts
-                    .into_iter()
-                    .map(|h| Self::host_to_ip_list(h, port))
-                    .collect::<ConResult<Vec<Vec<(String, u16)>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<(String, u16)>>();
-
-                addresses.shuffle(&mut thread_rng());
-
-                Ok(addresses)
+                AddressList::new(hosts, port, fingerprint)
             })
     }
 
@@ -392,21 +380,5 @@ impl ConOpts {
     #[inline]
     fn parse_dsn_part<'a>(cap: &'a Captures, index: usize) -> &'a str {
         cap.get(index).map_or("", |s| s.as_str())
-    }
-
-    /// Parses a socket address to an IP
-    #[inline]
-    fn sock_addr_to_ip(sa: SocketAddr) -> String {
-        sa.to_string().split(':').take(1).collect()
-    }
-
-    /// Resolves a hostname to a list of IP
-    #[inline]
-    fn host_to_ip_list(host: String, port: u16) -> ConResult<Vec<(String, u16)>> {
-        Ok(host
-            .to_socket_addrs()?
-            .map(Self::sock_addr_to_ip)
-            .map(|ip| (ip, port))
-            .collect::<Vec<(String, u16)>>())
     }
 }

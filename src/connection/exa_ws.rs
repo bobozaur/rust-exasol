@@ -1,9 +1,11 @@
 use super::{Attributes, MaybeCompressedWs, ReqResult, ResponseData};
+use super::{Certificate, ConResult};
 use crate::error::{ConnectionError, DriverError, Result};
 use crate::{ConOpts, ProtocolVersion};
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::RsaPublicKey;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::TcpStream;
 use tungstenite::stream::MaybeTlsStream;
@@ -82,6 +84,46 @@ impl ExaWebSocket {
         }
 
         Ok(data)
+    }
+
+    /// Validates the server fingerprint
+    pub fn validate_fingerprint(&mut self, fingerprint: String) -> ConResult<()> {
+        let fingerprint = fingerprint.as_bytes().to_vec();
+        let server_fp = self
+            .peer_certificate()
+            .and_then(|cert| cert.as_bytes())
+            .map(|v| {
+                let mut hasher = Sha256::new();
+                hasher.update(v.as_slice());
+                hasher.finalize().to_vec()
+            })
+            .unwrap_or_default();
+
+        match fingerprint == server_fp {
+            true => Ok(()),
+            false => Err(ConnectionError::FingerprintMismatch(fingerprint, server_fp)),
+        }
+    }
+
+    /// Gets the peer leaf certificate
+    fn peer_certificate(&mut self) -> Option<Certificate> {
+        let stream = self.ws.as_inner_mut().get_ref();
+        match stream {
+            #[cfg(feature = "rustls")]
+            MaybeTlsStream::Rustls(s) => s
+                .conn
+                .peer_certificates()
+                .map(|certs| certs.first())
+                .flatten()
+                .map(|cert| Certificate::RustlsCert(cert.clone())),
+            #[cfg(feature = "native-tls-basic")]
+            MaybeTlsStream::NativeTls(s) => s
+                .peer_certificate()
+                .ok()
+                .flatten()
+                .map(|cert| Certificate::NativeTlsCert(cert)),
+            _ => None,
+        }
     }
 
     /// Gets the public key from Exasol

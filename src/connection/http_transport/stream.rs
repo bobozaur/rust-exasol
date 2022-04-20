@@ -1,19 +1,19 @@
 use super::TransportResult;
-#[cfg(feature = "native-tls")]
+#[cfg(feature = "native-tls-basic")]
 use crate::error::HttpTransportError;
-#[cfg(feature = "native-tls")]
+#[cfg(feature = "native-tls-basic")]
 use __native_tls::{Identity, TlsAcceptor, TlsStream};
 #[cfg(feature = "rustls")]
-use __rustls::{
-    Certificate as RustlsCert, PrivateKey, ServerConfig, ServerConnection, StreamOwned,
-};
-#[cfg(any(feature = "native-tls", feature = "rustls"))]
+use __rustls::{Certificate as RustlsCert, PrivateKey};
+#[cfg(feature = "rustls")]
+use __rustls::{ServerConfig, ServerConnection, StreamOwned};
+#[cfg(any(feature = "native-tls-basic", feature = "rustls"))]
 use rcgen::{Certificate, CertificateParams, KeyPair, PKCS_RSA_SHA256};
-#[cfg(any(feature = "native-tls", feature = "rustls"))]
+#[cfg(any(feature = "native-tls-basic", feature = "rustls"))]
 use rsa::pkcs1::LineEnding;
-#[cfg(any(feature = "native-tls", feature = "rustls"))]
+#[cfg(any(feature = "native-tls-basic", feature = "rustls"))]
 use rsa::pkcs8::EncodePrivateKey;
-#[cfg(any(feature = "native-tls", feature = "rustls"))]
+#[cfg(any(feature = "native-tls-basic", feature = "rustls"))]
 use rsa::RsaPrivateKey;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -24,7 +24,7 @@ use std::sync::Arc;
 pub enum MaybeTlsStream {
     /// Unencrypted socket stream.
     Plain(TcpStream),
-    #[cfg(feature = "native-tls")]
+    #[cfg(feature = "native-tls-basic")]
     /// Encrypted socket stream using `native-tls`.
     NativeTls(TlsStream<TcpStream>),
     #[cfg(feature = "rustls")]
@@ -39,7 +39,7 @@ impl MaybeTlsStream {
         match encryption {
             false => Ok(MaybeTlsStream::Plain(stream)),
             true => {
-                #[cfg(feature = "native-tls")]
+                #[cfg(feature = "native-tls-basic")]
                 return Self::get_native_tls_stream(stream);
 
                 #[cfg(feature = "rustls")]
@@ -50,7 +50,7 @@ impl MaybeTlsStream {
         }
     }
 
-    #[cfg(any(feature = "rustls", feature = "native-tls"))]
+    #[cfg(any(feature = "rustls", feature = "native-tls-basic"))]
     fn make_cert() -> TransportResult<Certificate> {
         let mut params = CertificateParams::default();
         params.alg = &PKCS_RSA_SHA256;
@@ -58,7 +58,7 @@ impl MaybeTlsStream {
         Ok(Certificate::from_params(params)?)
     }
 
-    #[cfg(any(feature = "rustls", feature = "native-tls"))]
+    #[cfg(any(feature = "rustls", feature = "native-tls-basic"))]
     fn make_rsa_keypair() -> TransportResult<KeyPair> {
         let mut rng = rand::thread_rng();
         let bits = 2048;
@@ -67,7 +67,7 @@ impl MaybeTlsStream {
         Ok(KeyPair::from_pem(&key)?)
     }
 
-    #[cfg(feature = "native-tls")]
+    #[cfg(feature = "native-tls-basic")]
     fn get_native_tls_stream(socket: TcpStream) -> TransportResult<MaybeTlsStream> {
         let cert = Self::make_cert()?;
         let tls_cert = cert.serialize_pem()?;
@@ -106,7 +106,7 @@ impl Read for MaybeTlsStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             MaybeTlsStream::Plain(ref mut s) => s.read(buf),
-            #[cfg(feature = "native-tls")]
+            #[cfg(feature = "native-tls-basic")]
             MaybeTlsStream::NativeTls(ref mut s) => s.read(buf),
             #[cfg(feature = "rustls")]
             MaybeTlsStream::Rustls(ref mut s) => s.read(buf),
@@ -118,7 +118,7 @@ impl Write for MaybeTlsStream {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             MaybeTlsStream::Plain(ref mut s) => s.write(buf),
-            #[cfg(feature = "native-tls")]
+            #[cfg(feature = "native-tls-basic")]
             MaybeTlsStream::NativeTls(ref mut s) => s.write(buf),
             #[cfg(feature = "rustls")]
             MaybeTlsStream::Rustls(ref mut s) => s.write(buf),
@@ -128,7 +128,7 @@ impl Write for MaybeTlsStream {
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
             MaybeTlsStream::Plain(ref mut s) => s.flush(),
-            #[cfg(feature = "native-tls")]
+            #[cfg(feature = "native-tls-basic")]
             MaybeTlsStream::NativeTls(ref mut s) => s.flush(),
             #[cfg(feature = "rustls")]
             MaybeTlsStream::Rustls(ref mut s) => s.flush(),

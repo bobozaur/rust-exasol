@@ -5,7 +5,7 @@ use std::sync::{Arc, Barrier};
 /// HTTP Transport options for IMPORT and EXPORT.
 ///
 /// Defaults to 0 threads (meaning a thread will be created for all available Exasol nodes in the cluster),
-/// no compression and encryption is conditioned by the `native-tls` and `rustls` feature flags.
+/// no compression while encryption is conditioned by the `native-tls` and `rustls` feature flags.
 #[derive(Clone, Debug)]
 pub struct HttpTransportOpts {
     num_threads: usize,
@@ -19,7 +19,7 @@ impl Default for HttpTransportOpts {
         Self {
             num_threads: 0,
             compression: false,
-            encryption: cfg!(any(feature = "native-tls", feature = "rustls")),
+            encryption: cfg!(any(feature = "native-tls-basic", feature = "rustls")),
         }
     }
 }
@@ -49,7 +49,7 @@ impl HttpTransportOpts {
     }
 
     fn validate_encryption(flag: bool) {
-        if flag && cfg!(not(any(feature = "native-tls", feature = "rustls"))) {
+        if flag && cfg!(not(any(feature = "native-tls-basic", feature = "rustls"))) {
             panic!("native-tls or rustls features must be enabled to use encryption")
         }
     }

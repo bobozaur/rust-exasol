@@ -93,9 +93,15 @@ pub enum ConnectionError {
     CryptographyError(#[from] rsa::errors::Error),
     #[error(transparent)]
     PKCS1Error(#[from] rsa::pkcs1::Error),
+    #[error("The fingerprint in the DSN and the server fingerprint do not match: {0:?} - {1:?}")]
+    FingerprintMismatch(Vec<u8>, Vec<u8>),
     #[error(transparent)]
     WebsocketError(#[from] tungstenite::error::Error),
-    #[cfg(feature = "native-tls")]
+    #[error(transparent)]
+    HandshakeError(#[from] HandshakeError<ClientHandshake<MaybeTlsStream<TcpStream>>>),
+    #[error("Unsupported connector type")]
+    UnsupportedConnector,
+    #[cfg(feature = "native-tls-basic")]
     #[error(transparent)]
     NativeTlsError(#[from] __native_tls::HandshakeError<TcpStream>),
     #[cfg(feature = "rustls")]
@@ -104,8 +110,6 @@ pub enum ConnectionError {
     #[cfg(feature = "rustls")]
     #[error(transparent)]
     RustlsError(#[from] __rustls::Error),
-    #[error(transparent)]
-    HandshakeError(#[from] HandshakeError<ClientHandshake<MaybeTlsStream<TcpStream>>>),
 }
 
 /// HTTP transport related errors
@@ -115,15 +119,6 @@ pub enum HttpTransportError {
     RsaError(#[from] rsa::errors::Error),
     #[error(transparent)]
     PKCS8Error(#[from] rsa::pkcs8::Error),
-    #[cfg(feature = "native-tls")]
-    #[error(transparent)]
-    NativeTlsError(#[from] __native_tls::Error),
-    #[cfg(feature = "native-tls")]
-    #[error("Error occurred during TLS handshake")]
-    HandshakeError,
-    #[cfg(feature = "rustls")]
-    #[error(transparent)]
-    RustlsError(#[from] __rustls::Error),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Could not parse port for HTTP transport")]
@@ -145,4 +140,13 @@ pub enum HttpTransportError {
     #[cfg(any(feature = "rcgen"))]
     #[error(transparent)]
     CertificateError(#[from] rcgen::RcgenError),
+    #[cfg(feature = "native-tls-basic")]
+    #[error(transparent)]
+    NativeTlsError(#[from] __native_tls::Error),
+    #[cfg(feature = "native-tls-basic")]
+    #[error("Error occurred during TLS handshake")]
+    HandshakeError,
+    #[cfg(feature = "rustls")]
+    #[error(transparent)]
+    RustlsError(#[from] __rustls::Error),
 }
