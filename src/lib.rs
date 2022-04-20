@@ -31,7 +31,7 @@
 //!
 //! // Retrieving data associated with the result set.
 //! // A Vec of rows is returned, and the row type in this case will be Vec<String>.
-//! let data: Vec<Vec<String>> = exa_con.fetch_all(&mut result).unwrap();
+//! let data: Vec<Vec<String>> = exa_con.iter_result(&mut result).unwrap();
 //! ```
 //!
 //! First 1000 rows get returned immediately and then data is retrieved in chunks in the [ResultSet]
@@ -132,7 +132,7 @@
 //!     col3: u8,
 //! }
 //!
-//! let data = exa_con.fetch_all::<Test>(&mut result).unwrap();
+//! let data = exa_con.iter_result::<Test>(&mut result).unwrap();
 //! for row in data {
 //!     // do stuff with row
 //! }

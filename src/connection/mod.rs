@@ -20,11 +20,14 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
+use std::iter::Flatten;
 use std::net::TcpStream;
 use std::ops::ControlFlow;
+use std::option::IntoIter;
 use std::path::Path;
+use tls_connector::ConResult;
+pub use tls_connector::TlsConnector;
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
-use url::Url;
 
 mod compress;
 mod driver_attr;
@@ -33,12 +36,14 @@ mod http_transport;
 mod response;
 mod result;
 mod row;
+mod tls_connector;
 
 const TRANSPORT_BUFFER_SIZE: usize = 65536;
 
 // Convenience aliases
 type ReqResult<T> = std::result::Result<T, RequestError>;
-type WsAddr = (WebSocket<MaybeTlsStream<TcpStream>>, String, u16);
+type Ws = WebSocket<MaybeTlsStream<TcpStream>>;
+type WsAddr = (Ws, String, u16);
 
 /// Convenience function to quickly connect using default options.
 /// Returns a [Connection] set using the default [ConOpts]
@@ -67,6 +72,12 @@ where
 }
 
 /// The [Connection] struct will be what we use to interact with the database.
+/// The connection keeps track of all the result sets and prepared statements issued, and,
+/// if they are not closed by the user, they will automatically get closed when the
+/// connection is dropped.
+///
+/// As a best practice, though, put some effort into manually closing the results and
+/// prepared statements created so as not to bloat the connection.
 #[doc(hidden)]
 pub struct Connection {
     driver_attr: DriverAttributes,
@@ -120,7 +131,7 @@ impl Debug for Connection {
 }
 
 impl Connection {
-    /// Creates the [Connection] using the provided [ConOpts].
+    /// Creates a [Connection] using the provided [ConOpts].
     /// If a range is provided as DSN, connection attempts are made for max each possible
     /// options, until one is successful.
     ///
@@ -145,28 +156,33 @@ impl Connection {
     /// let mut exa_con = Connection::new(opts).unwrap();
     /// ```
     pub fn new(opts: ConOpts) -> Result<Connection> {
-        let (ws, addr, port) =
-            Self::try_websocket_from_opts(&opts).map_err(DriverError::ConnectionError)?;
-
-        let driver_attr = DriverAttributes {
-            port,
-            server_ip: addr,
-            fetch_size: opts.fetch_size(),
-            lowercase_columns: opts.lowercase_columns(),
+        let cb = |prefix: &str, addr: &str, port: u16| {
+            let url = format!("{}://{}:{}/", prefix, addr, port);
+            let (ws, _) = tungstenite::connect(url)?;
+            Ok(ws)
         };
 
-        let ws = ExaWebSocket::new(ws, opts)?;
+        Self::create(cb, opts)
+    }
 
-        let mut con = Self {
-            rs_handles: HashSet::new(),
-            ps_handles: HashSet::new(),
-            driver_attr,
-            ws,
-        };
+    /// Creates a [Connection] using a custom [TlsConnector] and a set of [ConOpts].
+    ///
+    /// This method is only available when either the `rustls` or `native-tls` features
+    /// are enabled. Note that encryption in the [ConOpts] will always be automatically
+    /// enabled by this method.
+    ///
+    /// This method gives more control over how the TLS connection is established,
+    /// e.g: you would use this if you want to rely on a self-signed certificate,
+    /// or a custom root store.
+    #[cfg(any(feature = "native-tls", feature = "rustls"))]
+    pub fn from_connector(connector: TlsConnector, mut opts: ConOpts) -> Result<Connection> {
+        // Cloning the connector is necessary because we'll call this closure
+        // once for each IP resolved from the DSN, in case a range was provided.
+        let cb =
+            |prefix: &str, addr: &str, port: u16| connector.clone().connect(prefix, addr, port);
 
-        // Get connection attributes from database
-        con.get_attributes()?;
-        Ok(con)
+        opts.set_encryption(true);
+        Self::create(cb, opts)
     }
 
     /// Returns the fetch size of [ResultSet] chunks
@@ -439,9 +455,32 @@ impl Connection {
     }
 
     /// For a given mutable reference of a [QueryResult],
-    /// return all rows if the query produced a [ResultSet].
-    /// Returns an empty `Vec` if there's no result set or it was all retrieved already.
-    /// Automatically closes the result set if it was fully retrieved.
+    /// returns an iterator over the underlying [ResultSet], if there's one.
+    /// If there is no [ResultSet], the iterator immediately returns `None`.
+    /// Otherwise, rows are returned as `Some(Result<T>)` where T is the type
+    /// the rows will get deserialized into.
+    ///
+    /// Given an iterator here, the full toolset of [Iterator] can be used. The [QueryResult],
+    /// or rather the [ResultSet] in it, holds an internal state of the result set iteration.
+    ///
+    /// # Important
+    /// The iterator holds a mutable reference to the [Connection], to be able to
+    /// retrieve rows as needed, as the iterator itself is lazy and data is retrieved in chunks.
+    ///
+    /// This is important because it means there can't be two result sets coming from the
+    /// same connection getting iterated over at the same time, or interleaved in any way.
+    /// You have to work with one result set at a time, collecting/storing it locally
+    /// and then generate a new iterator for a different [QueryResult].
+    ///
+    /// You are not, however, restricted to iterating over the entire result set at a given time.
+    /// Since the iterator is generated from a mutable reference of the [QueryResult], you can,
+    /// say, get the iterator, `take` only the first 100 rows, drop the iterator, but sometime
+    /// later, generate a new iterator from the same [QueryResult] and collect the rest of the
+    /// result set.
+    ///
+    /// The rule is that if there are less than 1000 rows in the result set, they are
+    /// returned immediately. Otherwise, the data is retrieved in chunks from the database
+    /// based on the `fetch_size` attribute of the connection.
     /// ```
     /// # use exasol::error::Result;
     /// # use exasol::{connect, bind, QueryResult};
@@ -454,50 +493,20 @@ impl Connection {
     /// #
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
-    /// let data: Vec<Vec<String>> = exa_con.fetch_all(&mut result).unwrap();
+    /// let data: Vec<Vec<String>> = exa_con.iter_result(&mut result).unwrap();
     ///
     /// let mut result2 = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
-    /// let data2: Vec<Vec<String>> = exa_con.fetch_all(&mut result2).unwrap();
+    /// let data2 = exa_con.iter_result(&mut result2).collect::<Result<Vec<Vec<String>>>>().unwrap();
     /// assert_eq!(data.len(), 2);
     /// ```
-    pub fn fetch_all<T: DeserializeOwned>(&mut self, result: &mut QueryResult) -> Result<Vec<T>> {
-        result
+    pub fn iter_result<'a, T: DeserializeOwned>(
+        &'a mut self,
+        result: &'a mut QueryResult,
+    ) -> Flatten<IntoIter<ResultSetIter<'a, T>>> {
+        let iter = result
             .result_set_mut()
-            .map(|rs| ResultSetIter::new(rs, self).collect())
-            .unwrap_or(Ok(Vec::new()))
-    }
-
-    /// For a given mutable reference of a [QueryResult],
-    /// return `n` rows or the remainder in the result set, if the query produced a [ResultSet].
-    /// Returns an empty `Vec` if there's no result set or it was all retrieved already.
-    /// Automatically closes the result set if it was fully retrieved.
-    /// ```
-    /// # use exasol::error::Result;
-    /// # use exasol::{connect, bind, QueryResult};
-    /// # use std::env;
-    /// #
-    /// # let dsn = env::var("EXA_DSN").unwrap();
-    /// # let schema = env::var("EXA_SCHEMA").unwrap();
-    /// # let user = env::var("EXA_USER").unwrap();
-    /// # let password = env::var("EXA_PASSWORD").unwrap();
-    /// #
-    /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
-    /// let data: Vec<Vec<String>> = exa_con.fetch(&mut result, 1).unwrap();
-    /// assert_eq!(data.len(), 1);
-    ///
-    /// // We're closing the underlying result set because we don't need it anymore.
-    /// exa_con.close_result(result).unwrap();
-    /// ```
-    pub fn fetch<T: DeserializeOwned>(
-        &mut self,
-        result: &mut QueryResult,
-        n: usize,
-    ) -> Result<Vec<T>> {
-        result
-            .result_set_mut()
-            .map(|rs| ResultSetIter::new(rs, self).take(n).collect())
-            .unwrap_or(Ok(Vec::new()))
+            .map(|rs| ResultSetIter::new(rs, self));
+        iter.into_iter().flatten()
     }
 
     /// HTTP Transport export of a query or table with row deserialization into a given Rust type.
@@ -976,6 +985,34 @@ impl Connection {
         self.ws.get_resp_data(payload)
     }
 
+    fn create<F>(mut cb: F, opts: ConOpts) -> Result<Connection>
+    where
+        F: Fn(&str, &str, u16) -> ConResult<Ws>,
+    {
+        let parts = Self::ws_from_closure(&mut cb, &opts).map_err(DriverError::ConnectionError)?;
+        let (ws, addr, port) = parts;
+
+        let driver_attr = DriverAttributes {
+            port,
+            server_ip: addr,
+            fetch_size: opts.fetch_size(),
+            lowercase_columns: opts.lowercase_columns(),
+        };
+
+        let ws = ExaWebSocket::new(ws, opts)?;
+
+        let mut con = Self {
+            rs_handles: HashSet::new(),
+            ps_handles: HashSet::new(),
+            driver_attr,
+            ws,
+        };
+
+        // Get connection attributes from database
+        con.get_attributes()?;
+        Ok(con)
+    }
+
     /// Sets connection attributes.
     #[inline]
     fn set_attributes(&mut self, attrs: Value) -> Result<()> {
@@ -1023,14 +1060,20 @@ impl Connection {
     /// We'll get the list of IP addresses resulted from parsing and resolving the DSN
     /// Then loop through all of them (max once each) until a connection is established.
     /// Login is attempted afterwards.
-    fn try_websocket_from_opts(opts: &ConOpts) -> std::result::Result<WsAddr, ConnectionError> {
+    fn ws_from_closure<F>(
+        cb: &mut F,
+        opts: &ConOpts,
+    ) -> std::result::Result<WsAddr, ConnectionError>
+    where
+        F: Fn(&str, &str, u16) -> ConResult<Ws>,
+    {
         let addresses = opts.parse_dsn()?;
-        let ws_prefix = opts.ws_prefix();
+        let prefix = opts.ws_prefix();
 
         let cf = addresses
             .into_iter()
             .try_fold(ConnectionError::InvalidDSN, |_, (addr, port)| {
-                Self::try_websocket_from_url(ws_prefix, addr, port)
+                Self::connect_ws(cb, prefix, addr, port)
             });
 
         match cf {
@@ -1042,18 +1085,19 @@ impl Connection {
     /// Attempts to create a websocket for the given URL
     /// Issues a Break variant if the connection was established
     /// or the Continue variant if an error was encountered.
-    fn try_websocket_from_url(
+    fn connect_ws<F>(
+        cb: &mut F,
         prefix: &str,
         addr: String,
         port: u16,
-    ) -> ControlFlow<WsAddr, ConnectionError> {
-        let full_url = format!("{}://{}:{}", prefix, &addr, port);
-        let res = Url::parse(&full_url)
-            .map_err(ConnectionError::from)
-            .and_then(|url| tungstenite::connect(url).map_err(ConnectionError::from));
+    ) -> ControlFlow<WsAddr, ConnectionError>
+    where
+        F: Fn(&str, &str, u16) -> ConResult<Ws>,
+    {
+        let res = cb(prefix, &addr, port);
 
         match res {
-            Ok((ws, _)) => ControlFlow::Break((ws, addr, port)),
+            Ok(ws) => ControlFlow::Break((ws, addr, port)),
             Err(e) => ControlFlow::Continue(e),
         }
     }

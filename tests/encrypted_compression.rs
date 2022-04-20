@@ -3,6 +3,7 @@
 #[cfg(test)]
 #[allow(unused)]
 mod tests {
+    use exasol::error::Result;
     use exasol::*;
     use std::env;
 
@@ -25,18 +26,22 @@ mod tests {
             .execute("SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001;")
             .unwrap();
 
-        let rows: Vec<(String, String, u16)> = exa_con.fetch_all(&mut result).unwrap();
+        // let data: Vec<Vec<String>> = exa_con
+        //     .iter_result(&mut result)
+        //     .collect::<Result<_>>()
+        //     .unwrap();
 
-        let data: Vec<(String, String, u16)> = exa_con
-            .export_to_vec(
-                "SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001",
-                Some(http_opts),
-            )
-            .unwrap();
-
-        let http_opts = HttpTransportOpts::new(1, true, true);
-        exa_con
-            .import_from_iter("RUST.EXA_RUST_TEST", data, Some(http_opts))
-            .unwrap();
+        // let http_opts = HttpTransportOpts::new(1, true, true);
+        // let data: Vec<(String, String, u16)> = exa_con
+        //     .export_to_vec(
+        //         "SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001",
+        //         Some(http_opts),
+        //     )
+        //     .unwrap();
+        //
+        // let http_opts = HttpTransportOpts::new(1, true, true);
+        // exa_con
+        //     .import_from_iter("RUST.EXA_RUST_TEST", data, Some(http_opts))
+        //     .unwrap();
     }
 }

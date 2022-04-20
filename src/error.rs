@@ -4,10 +4,12 @@ use rsa;
 use serde_json;
 use std::array::TryFromSliceError;
 use std::fmt::Debug;
+use std::net::TcpStream;
 use std::num::ParseIntError;
 use thiserror::Error as ThisError;
 use tungstenite;
-use url;
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{ClientHandshake, HandshakeError};
 
 /// Result implementation for the crate.;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -84,9 +86,7 @@ pub enum ConnectionError {
     #[error("Invalid DSN provided")]
     InvalidDSN,
     #[error(transparent)]
-    DSNParseError(#[from] url::ParseError),
-    #[error("Cannot resolve DSN hostnames")]
-    HostnameResolutionError(#[from] std::io::Error),
+    IoError(#[from] std::io::Error),
     #[error("Cannot parse provided hostname range in DSN")]
     RangeParseError(#[from] ParseIntError),
     #[error(transparent)]
@@ -95,6 +95,17 @@ pub enum ConnectionError {
     PKCS1Error(#[from] rsa::pkcs1::Error),
     #[error(transparent)]
     WebsocketError(#[from] tungstenite::error::Error),
+    #[cfg(feature = "native-tls")]
+    #[error(transparent)]
+    NativeTlsError(#[from] __native_tls::HandshakeError<TcpStream>),
+    #[cfg(feature = "rustls")]
+    #[error(transparent)]
+    InvalidDsn(#[from] __rustls::client::InvalidDnsNameError),
+    #[cfg(feature = "rustls")]
+    #[error(transparent)]
+    RustlsError(#[from] __rustls::Error),
+    #[error(transparent)]
+    HandshakeError(#[from] HandshakeError<ClientHandshake<MaybeTlsStream<TcpStream>>>),
 }
 
 /// HTTP transport related errors

@@ -25,7 +25,7 @@ mod tests {
             .execute("SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001;")
             .unwrap();
 
-        let rows: Vec<(String, String, u16)> = exa_con.fetch_all(&mut result).unwrap();
+        let rows: Vec<(String, String, u16)> = exa_con.iter_result(&mut result).unwrap();
 
         let http_opts = HttpTransportOpts::new(1, true, false);
         let data: Vec<(String, String, u16)> = exa_con
