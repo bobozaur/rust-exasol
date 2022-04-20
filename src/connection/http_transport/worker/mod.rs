@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub mod reader;
 pub mod writer;
@@ -170,7 +171,12 @@ pub trait HttpTransportWorker {
     /// Starts HTTP Transport
     fn start(&mut self, mut config: HttpTransportConfig) -> TransportResult<()> {
         // Initialize stream and send internal Exasol addresses to parent thread
-        let socket = Self::initialize(config.server_addr.as_str(), &mut config.addr_sender);
+        let timeout = config.take_timeout();
+        let socket = Self::initialize(
+            config.server_addr.as_str(),
+            &mut config.addr_sender,
+            timeout,
+        );
 
         // Wait for the parent thread to read all addresses, compose and execute query
         config.barrier.wait();
@@ -189,7 +195,11 @@ pub trait HttpTransportWorker {
     /// gets an internal Exasol address for HTTP transport,
     /// sends the address back to the parent thread
     /// and returns the [TcpStream] for further use.
-    fn initialize<A>(server_addr: A, addr_sender: &mut Sender<String>) -> TransportResult<TcpStream>
+    fn initialize<A>(
+        server_addr: A,
+        addr_sender: &mut Sender<String>,
+        timeout: Option<Duration>,
+    ) -> TransportResult<TcpStream>
     where
         A: ToSocketAddrs,
     {
@@ -197,6 +207,8 @@ pub trait HttpTransportWorker {
         // the internal Exasol address to be used in the query.
         // This must always be done unencrypted.
         let mut stream = TcpStream::connect(server_addr)?;
+        stream.set_read_timeout(timeout.clone())?;
+        stream.set_write_timeout(timeout)?;
         stream.write_all(&SPECIAL_PACKET)?;
         stream.flush()?;
 

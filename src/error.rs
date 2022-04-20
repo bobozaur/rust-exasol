@@ -123,6 +123,10 @@ pub enum HttpTransportError {
     IoError(#[from] std::io::Error),
     #[error("Could not parse port for HTTP transport")]
     PortParseError(#[from] TryFromSliceError),
+    #[error("Missing mandatory parameter: {0}")]
+    MissingParameter(&'static str),
+    #[error("Invalid parameter {0} - {1}")]
+    InvalidParameter(&'static str, String),
     #[error("Could not parse chunk size")]
     ChunkSizeError(#[from] ParseIntError),
     #[error(transparent)]

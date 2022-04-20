@@ -8,6 +8,7 @@ mod tests {
     use exasol::error::Result;
     use exasol::*;
     use std::env;
+    use std::time::Duration;
 
     #[test]
     #[allow(unused)]
@@ -34,17 +35,16 @@ mod tests {
             .execute("SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001;")
             .unwrap();
 
-        let http_opts = HttpTransportOpts::new(1, true, true);
-        let data: Vec<(String, String, u16)> = exa_con
-            .export_to_vec(
-                "SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001",
-                Some(http_opts),
-            )
-            .unwrap();
+        let mut http_opts = ExportOpts::new();
+        http_opts.set_encryption(true);
+        http_opts.set_compression(true);
+        http_opts.set_query("SELECT * FROM RUST.EXA_RUST_TEST LIMIT 2001");
+        let data: Vec<(String, String, u16)> = exa_con.export_to_vec(http_opts).unwrap();
 
-        let http_opts = HttpTransportOpts::new(1, true, true);
-        exa_con
-            .import_from_iter("RUST.EXA_RUST_TEST", data, Some(http_opts))
-            .unwrap();
+        let mut http_opts = ImportOpts::new();
+        http_opts.set_encryption(true);
+        http_opts.set_compression(true);
+        http_opts.set_table_name("RUST.EXA_RUST_TEST");
+        exa_con.import_from_iter(data, http_opts).unwrap();
     }
 }

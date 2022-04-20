@@ -250,6 +250,7 @@ pub mod error;
 mod params;
 
 pub use con_opts::{ConOpts, ProtocolVersion};
-pub use connection::{connect, deserialize_as_seq, Column, Connection, Connector, DataType};
-pub use connection::{HttpTransportOpts, PreparedStatement, QueryResult, ResultSet};
+pub use connection::{connect, deserialize_as_seq, Connection, Connector};
+pub use connection::{Column, DataType, PreparedStatement, QueryResult, ResultSet};
+pub use connection::{ExportOpts, HttpTransportOpts, ImportOpts};
 pub use params::bind;

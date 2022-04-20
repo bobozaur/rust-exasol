@@ -6,12 +6,11 @@ use super::TRANSPORT_BUFFER_SIZE;
 use crate::error::{DriverError, HttpTransportError, Result};
 use crate::Connection;
 use config::HttpTransportConfig;
-pub use config::HttpTransportOpts;
+pub use config::{ExportOpts, HttpTransportOpts, ImportOpts, TrimType};
 use crossbeam::channel::{IntoIter, Receiver, Sender};
 use crossbeam::thread::{Scope, ScopedJoinHandle};
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use serde::Serialize;
 use std::io::{Error, ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
@@ -89,38 +88,30 @@ impl Read for ExaReader {
 /// Convenience alias
 pub type TransportResult<T> = std::result::Result<T, HttpTransportError>;
 
-pub struct HttpExportJob<'a, Q: AsRef<str> + Serialize + Send, T, F: FnOnce(ExaReader) -> T> {
+pub struct HttpExportJob<'a, T, F: FnOnce(ExaReader) -> T> {
     con: &'a mut Connection,
-    query_or_table: Q,
-    opts: Option<HttpTransportOpts>,
+    opts: Option<ExportOpts>,
     callback: Option<F>,
 }
 
-impl<'a, Q, T, F> HttpExportJob<'a, Q, T, F>
+impl<'a, T, F> HttpExportJob<'a, T, F>
 where
-    Q: AsRef<str> + Serialize + Send,
     F: FnOnce(ExaReader) -> T,
 {
-    pub fn new(
-        con: &'a mut Connection,
-        query_or_table: Q,
-        callback: F,
-        opts: Option<HttpTransportOpts>,
-    ) -> Self {
+    pub fn new(con: &'a mut Connection, callback: F, opts: ExportOpts) -> Self {
         Self {
             con,
-            query_or_table,
-            opts,
+            opts: Some(opts),
             callback: Some(callback),
         }
     }
 }
 
-impl<'a, Q, T, F> HttpTransportJob for HttpExportJob<'a, Q, T, F>
+impl<'a, T, F> HttpTransportJob for HttpExportJob<'a, T, F>
 where
-    Q: AsRef<str> + Serialize + Send,
     F: FnOnce(ExaReader) -> T,
 {
+    type Opts = ExportOpts;
     type Worker = HttpExportThread;
     type DataHandler = Receiver<Vec<u8>>;
     type Callback = F;
@@ -133,8 +124,60 @@ where
         crossbeam::channel::unbounded()
     }
 
-    fn generate_query(query_or_table: &str, hosts: String) -> String {
-        format!("EXPORT ({}) INTO CSV\n{}", query_or_table, hosts)
+    fn generate_query(opts: Self::Opts, files: String) -> TransportResult<String> {
+        let mut parts = Vec::new();
+
+        if let Some(com) = opts.comment() {
+            if com.contains("*/") {
+                return Err(HttpTransportError::InvalidParameter(
+                    "comment",
+                    com.to_owned(),
+                ));
+            } else {
+                parts.push(format!("/*{}*/", com));
+            }
+        }
+
+        let source = if let Some(tbl) = opts.table_name() {
+            format!("\"{}\"", tbl)
+        } else if let Some(q) = opts.query() {
+            format!(
+                "(\n{}\n)",
+                q.trim_matches(|c| c == ' ' || c == '\n' || c == ';')
+            )
+        } else {
+            return Err(HttpTransportError::InvalidParameter(
+                "table_name or query",
+                "".to_owned(),
+            ));
+        };
+
+        parts.push(format!("EXPORT {} INTO CSV", source));
+        parts.push(files);
+
+        if let Some(enc) = opts.encoding() {
+            parts.push(format!("ENCODING = '{}'", enc));
+        }
+
+        if let Some(n) = opts.null() {
+            parts.push(format!("NULL = '{}'", n));
+        }
+
+        parts.push(format!(
+            "COLUMN SEPARATOR = '{}'",
+            opts.column_separator() as char
+        ));
+
+        parts.push(format!(
+            "COLUMN DELIMITER = '{}'",
+            opts.column_delimiter() as char
+        ));
+
+        if opts.with_column_names() {
+            parts.push("WITH COLUMN NAMES".to_owned())
+        }
+
+        Ok(parts.join("\n"))
     }
 
     fn handle_data(handler: Self::DataHandler, callback: Self::Callback) -> Self::Output {
@@ -142,47 +185,39 @@ where
         callback(reader)
     }
 
-    fn get_opts(&mut self) -> HttpTransportOpts {
+    fn get_opts(&mut self) -> Self::Opts {
         self.opts.take().unwrap_or_default()
     }
 
-    fn get_parts(&mut self) -> (&str, &mut Connection, Option<Self::Callback>) {
-        (self.query_or_table.as_ref(), self.con, self.callback.take())
+    fn get_parts(&mut self) -> (&mut Connection, Option<Self::Callback>) {
+        (self.con, self.callback.take())
     }
 }
 
-pub struct HttpImportJob<'a, Q: AsRef<str> + Serialize + Send, T, F: FnOnce(ExaWriter) -> T> {
+pub struct HttpImportJob<'a, T, F: FnOnce(ExaWriter) -> T> {
     con: &'a mut Connection,
-    table: Q,
-    opts: Option<HttpTransportOpts>,
+    opts: Option<ImportOpts>,
     callback: Option<F>,
 }
 
-impl<'a, Q, T, F> HttpImportJob<'a, Q, T, F>
+impl<'a, T, F> HttpImportJob<'a, T, F>
 where
-    Q: AsRef<str> + Serialize + Send,
     F: FnOnce(ExaWriter) -> T,
 {
-    pub fn new(
-        con: &'a mut Connection,
-        table: Q,
-        callback: F,
-        opts: Option<HttpTransportOpts>,
-    ) -> Self {
+    pub fn new(con: &'a mut Connection, callback: F, opts: ImportOpts) -> Self {
         Self {
             con,
-            table,
-            opts,
+            opts: Some(opts),
             callback: Some(callback),
         }
     }
 }
 
-impl<'a, Q, T, F> HttpTransportJob for HttpImportJob<'a, Q, T, F>
+impl<'a, T, F> HttpTransportJob for HttpImportJob<'a, T, F>
 where
-    Q: AsRef<str> + Serialize + Send,
     F: FnOnce(ExaWriter) -> T,
 {
+    type Opts = ImportOpts;
     type Worker = HttpImportThread;
     type DataHandler = Sender<Vec<u8>>;
     type Callback = F;
@@ -196,8 +231,57 @@ where
         (r, s)
     }
 
-    fn generate_query(table: &str, hosts: String) -> String {
-        format!("IMPORT INTO {} FROM CSV\n{}", table, hosts)
+    fn generate_query(opts: Self::Opts, files: String) -> TransportResult<String> {
+        let mut parts = Vec::new();
+
+        if let Some(com) = opts.comment() {
+            if com.contains("*/") {
+                return Err(HttpTransportError::InvalidParameter(
+                    "comment",
+                    com.to_owned(),
+                ));
+            } else {
+                parts.push(format!("/*{}*/", com));
+            }
+        }
+
+        let source = if let Some(tbl) = opts.table_name() {
+            format!("{}", tbl)
+        } else {
+            return Err(HttpTransportError::InvalidParameter(
+                "table_name or query",
+                "".to_owned(),
+            ));
+        };
+
+        parts.push(format!("IMPORT INTO {} FROM CSV", source));
+        parts.push(files);
+
+        if let Some(enc) = opts.encoding() {
+            parts.push(format!("ENCODING = '{}'", enc));
+        }
+
+        if let Some(n) = opts.null() {
+            parts.push(format!("NULL = '{}'", n));
+        }
+
+        if let Some(t) = opts.trim() {
+            parts.push(format!("{}", t))
+        }
+
+        parts.push(format!("SKIP = {}", opts.skip()));
+
+        parts.push(format!(
+            "COLUMN SEPARATOR = '{}'",
+            opts.column_separator() as char
+        ));
+
+        parts.push(format!(
+            "COLUMN DELIMITER = '{}'",
+            opts.column_delimiter() as char
+        ));
+
+        Ok(parts.join("\n"))
     }
 
     fn handle_data(handler: Self::DataHandler, callback: Self::Callback) -> Self::Output {
@@ -205,16 +289,17 @@ where
         callback(writer)
     }
 
-    fn get_opts(&mut self) -> HttpTransportOpts {
+    fn get_opts(&mut self) -> Self::Opts {
         self.opts.take().unwrap_or_default()
     }
 
-    fn get_parts(&mut self) -> (&str, &mut Connection, Option<Self::Callback>) {
-        (self.table.as_ref(), self.con, self.callback.take())
+    fn get_parts(&mut self) -> (&mut Connection, Option<Self::Callback>) {
+        (self.con, self.callback.take())
     }
 }
 
 pub trait HttpTransportJob {
+    type Opts: HttpTransportOpts + Send;
     type Worker: HttpTransportWorker;
     type DataHandler: Clone + Send;
     type Callback;
@@ -225,27 +310,27 @@ pub trait HttpTransportJob {
         Self::DataHandler,
     );
 
-    fn generate_query(query_or_table: &str, hosts: String) -> String;
+    fn generate_query(opts: Self::Opts, files: String) -> TransportResult<String>;
 
     fn handle_data(handler: Self::DataHandler, callback: Self::Callback) -> Self::Output;
 
     /// Accessor for the underlying HTTP Transport options.
-    fn get_opts(&mut self) -> HttpTransportOpts;
+    fn get_opts(&mut self) -> Self::Opts;
 
     /// Accessor for the underlying fields.
     /// Retrieved together to satisfy the borrow checker.
-    fn get_parts(&mut self) -> (&str, &mut Connection, Option<Self::Callback>);
+    fn get_parts(&mut self) -> (&mut Connection, Option<Self::Callback>);
 
     fn run(&mut self) -> Result<Self::Output> {
         let scope = crossbeam::scope(|s| {
             let (worker_channel, data_handler) = Self::generate_channel();
             let opts = self.get_opts();
-            let (qot, con, cb) = self.get_parts();
+            let (con, cb) = self.get_parts();
             let (hosts, num_threads) = Self::get_node_addresses(con, &opts)?;
 
             // Start orchestrator thread
             let handle = s.spawn(move |s| {
-                Self::orchestrate(s, worker_channel, hosts, num_threads, opts, qot, con)
+                Self::orchestrate(s, worker_channel, hosts, num_threads, opts, con)
             });
 
             let output = cb
@@ -275,8 +360,7 @@ pub trait HttpTransportJob {
         worker_channel: <Self::Worker as HttpTransportWorker>::Channel,
         hosts: Vec<String>,
         num_threads: usize,
-        opts: HttpTransportOpts,
-        qot: &'a str,
+        mut opts: Self::Opts,
         con: &'a mut Connection,
     ) -> Result<()>
     where
@@ -286,27 +370,28 @@ pub trait HttpTransportJob {
         let run = Arc::new(AtomicBool::new(true));
         let barrier = Arc::new(Barrier::new(num_threads + 1));
         let (addr_sender, addr_receiver) = crossbeam::channel::bounded(num_threads);
-        let use_encryption = opts.encryption();
-        let use_compression = opts.compression();
+        let enc = opts.encryption();
+        let cmp = opts.compression();
+        let timeout = opts.take_timeout();
         let configs = HttpTransportConfig::generate(
             hosts,
             barrier.clone(),
             run.clone(),
             addr_sender,
-            use_encryption,
-            use_compression,
+            enc,
+            cmp,
+            timeout,
         );
 
         // Start worker threads
         let handles = Self::start_workers(s, configs, num_threads, worker_channel);
 
         // Generate makeshift IMPORT/EXPORT filenames and locations
-        let filenames =
-            Self::generate_filenames(use_encryption, use_compression, num_threads, &addr_receiver);
+        let files = Self::generate_filenames(enc, cmp, num_threads, &addr_receiver);
 
         // Signal threads to stop if there was an error
         // on the orchestrator thread side
-        if filenames.is_err() {
+        if files.is_err() {
             run.store(false, Ordering::Release);
         }
 
@@ -315,8 +400,9 @@ pub trait HttpTransportJob {
         barrier.wait();
 
         // Executing the query blocks until the transport is over
-        let query_res = filenames.and_then(|hosts| {
-            let query = Self::generate_query(qot, hosts);
+        let query_res = files.and_then(|hosts| {
+            let query = Self::generate_query(opts, hosts);
+            let query = query.map_err(DriverError::HttpTransportError)?;
             con.execute(query)?;
             Ok(())
         });
@@ -325,6 +411,12 @@ pub trait HttpTransportJob {
         // as the sockets must not close before the server
         // reads everything from them (query execution finishes)
         barrier.wait();
+
+        // Signal threads to stop if there was an error
+        // on the orchestrator thread side
+        if query_res.is_err() {
+            run.store(false, Ordering::Release);
+        }
 
         Self::join_handles(handles).and(query_res)
     }
@@ -371,10 +463,7 @@ pub trait HttpTransportJob {
     }
 
     /// Gather Exasol cluster node hosts for HTTP Transport
-    fn get_node_addresses(
-        con: &mut Connection,
-        opts: &HttpTransportOpts,
-    ) -> Result<(Vec<String>, usize)> {
+    fn get_node_addresses(con: &mut Connection, opts: &Self::Opts) -> Result<(Vec<String>, usize)> {
         // Get cluster hosts
         let mut hosts = con.get_nodes()?;
 
