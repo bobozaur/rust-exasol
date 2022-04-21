@@ -139,7 +139,7 @@ where
         }
 
         let source = if let Some(tbl) = opts.table_name() {
-            format!("\"{}\"", tbl)
+            tbl.to_owned()
         } else if let Some(q) = opts.query() {
             format!(
                 "(\n{}\n)",
@@ -246,7 +246,7 @@ where
         }
 
         let source = if let Some(tbl) = opts.table_name() {
-            format!("{}", tbl)
+            tbl.to_owned()
         } else {
             return Err(HttpTransportError::InvalidParameter(
                 "table_name or query",

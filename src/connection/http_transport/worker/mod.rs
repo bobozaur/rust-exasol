@@ -207,7 +207,7 @@ pub trait HttpTransportWorker {
         // the internal Exasol address to be used in the query.
         // This must always be done unencrypted.
         let mut stream = TcpStream::connect(server_addr)?;
-        stream.set_read_timeout(timeout.clone())?;
+        stream.set_read_timeout(timeout)?;
         stream.set_write_timeout(timeout)?;
         stream.write_all(&SPECIAL_PACKET)?;
         stream.flush()?;

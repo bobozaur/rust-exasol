@@ -1,4 +1,4 @@
-use crate::error::{BindError, DriverError, Result};
+use crate::error::{BindError, QueryError, Result};
 use lazy_regex::regex;
 use regex::Captures;
 use serde::Serialize;
@@ -98,14 +98,15 @@ type BindResult = std::result::Result<String, BindError>;
 ///     AND ID = 10 \
 ///     AND VALUE IN ('a', 'b', 'c');");
 /// ```
-pub fn bind<T>(query: &str, params: T) -> Result<String>
+pub fn bind<Q, T>(query: Q, params: T) -> Result<String>
 where
+    Q: AsRef<str>,
     T: Serialize,
 {
     Ok(serde_json::to_value(params)
         .map_err(BindError::DeserializeError)
-        .and_then(|val| parametrize_query(query, val))
-        .map_err(DriverError::BindError)?)
+        .and_then(|val| parametrize_query(query.as_ref(), val))
+        .map_err(|e| QueryError::new(e.into(), &query))?)
 }
 
 /// Processes input [Value] into parameters and binds them to the query.

@@ -1,6 +1,7 @@
 use crate::con_opts::ConOpts;
 use crate::connection::http_transport::{ExaReader, ExaWriter};
-use crate::error::{ConnectionError, DriverError, Error, HttpTransportError, RequestError, Result};
+use crate::error::{ConnectionError, DriverError, Error, HttpTransportError};
+use crate::error::{QueryError, RequestError, Result};
 use compress::MaybeCompressedWs;
 use csv::{Reader, ReaderBuilder, WriterBuilder};
 use driver_attr::DriverAttributes;
@@ -443,6 +444,7 @@ impl Connection {
     {
         let payload = json!({"command": "execute", "sqlText": query});
         self.exec_with_one_result(payload)
+            .map_err(|e| QueryError::map_err(e, &query))
     }
 
     /// Sends multiple queries to the database and waits for their results.
@@ -553,11 +555,21 @@ impl Connection {
         // Recreating parameters because otherwise the CSV stuff
         // would have to be mapped to both the CSV Reader and the query.
         let mut transport_opts = ExportOpts::new();
-        opts.query().map(|s| transport_opts.set_query(s));
-        opts.table_name().map(|s| transport_opts.set_table_name(s));
-        opts.comment().map(|s| transport_opts.set_comment(s));
-        opts.encoding().map(|s| transport_opts.set_encoding(s));
-        opts.null().map(|s| transport_opts.set_null(s));
+        if let Some(s) = opts.query() {
+            transport_opts.set_query(s)
+        }
+        if let Some(s) = opts.table_name() {
+            transport_opts.set_table_name(s)
+        }
+        if let Some(s) = opts.comment() {
+            transport_opts.set_comment(s)
+        }
+        if let Some(s) = opts.encoding() {
+            transport_opts.set_encoding(s)
+        }
+        if let Some(s) = opts.null() {
+            transport_opts.set_null(s)
+        }
 
         transport_opts.set_num_threads(opts.num_threads());
         transport_opts.set_compression(opts.compression());
@@ -587,11 +599,21 @@ impl Connection {
         // so we'll make new options for the transfer itself
         // and use the given options in the closure.
         let mut transport_opts = ExportOpts::new();
-        opts.query().map(|s| transport_opts.set_query(s));
-        opts.table_name().map(|s| transport_opts.set_table_name(s));
-        opts.comment().map(|s| transport_opts.set_comment(s));
-        opts.encoding().map(|s| transport_opts.set_encoding(s));
-        opts.null().map(|s| transport_opts.set_null(s));
+        if let Some(s) = opts.query() {
+            transport_opts.set_query(s)
+        }
+        if let Some(s) = opts.table_name() {
+            transport_opts.set_table_name(s)
+        }
+        if let Some(s) = opts.comment() {
+            transport_opts.set_comment(s)
+        }
+        if let Some(s) = opts.encoding() {
+            transport_opts.set_encoding(s)
+        }
+        if let Some(s) = opts.null() {
+            transport_opts.set_null(s)
+        }
 
         transport_opts.set_num_threads(opts.num_threads());
         transport_opts.set_compression(opts.compression());
@@ -665,11 +687,21 @@ impl Connection {
         // Recreating parameters because otherwise the CSV stuff
         // would have to be mapped to both the CSV Writer and the query.
         let mut transport_opts = ImportOpts::new();
-        opts.columns().map(|v| transport_opts.set_columns(v));
-        opts.table_name().map(|s| transport_opts.set_table_name(s));
-        opts.comment().map(|s| transport_opts.set_comment(s));
-        opts.encoding().map(|s| transport_opts.set_encoding(s));
-        opts.null().map(|s| transport_opts.set_null(s));
+        if let Some(v) = opts.columns() {
+            transport_opts.set_columns(v)
+        }
+        if let Some(s) = opts.table_name() {
+            transport_opts.set_table_name(s)
+        }
+        if let Some(s) = opts.comment() {
+            transport_opts.set_comment(s)
+        }
+        if let Some(s) = opts.encoding() {
+            transport_opts.set_encoding(s)
+        }
+        if let Some(s) = opts.null() {
+            transport_opts.set_null(s)
+        }
 
         transport_opts.set_num_threads(opts.num_threads());
         transport_opts.set_compression(opts.compression());
@@ -704,11 +736,21 @@ impl Connection {
         // so we'll make new options for the transfer itself
         // and use the given options in the closure.
         let mut transport_opts = ImportOpts::new();
-        opts.columns().map(|v| transport_opts.set_columns(v));
-        opts.table_name().map(|s| transport_opts.set_table_name(s));
-        opts.comment().map(|s| transport_opts.set_comment(s));
-        opts.encoding().map(|s| transport_opts.set_encoding(s));
-        opts.null().map(|s| transport_opts.set_null(s));
+        if let Some(v) = opts.columns() {
+            transport_opts.set_columns(v)
+        }
+        if let Some(s) = opts.table_name() {
+            transport_opts.set_table_name(s)
+        }
+        if let Some(s) = opts.comment() {
+            transport_opts.set_comment(s)
+        }
+        if let Some(s) = opts.encoding() {
+            transport_opts.set_encoding(s)
+        }
+        if let Some(s) = opts.null() {
+            transport_opts.set_null(s)
+        }
 
         transport_opts.set_num_threads(opts.num_threads());
         transport_opts.set_compression(opts.compression());
@@ -868,7 +910,10 @@ impl Connection {
         });
 
         let payload = json!({"command": "createPreparedStatement", "sqlText": q});
-        let mut ps: PreparedStatement = self.get_resp_data(payload)?.try_into()?;
+        let mut ps: PreparedStatement = self
+            .get_resp_data(payload)
+            .map_err(|e| QueryError::map_err(e, &query))?
+            .try_into()?;
         ps.update_param_names(col_names);
         self.ps_handles.insert(ps.handle());
         Ok(ps)

@@ -18,6 +18,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, ThisError)]
 pub enum Error {
     #[error(transparent)]
+    QueryError(#[from] QueryError),
+    #[error(transparent)]
     DriverError(#[from] DriverError),
     #[error(transparent)]
     ExasolError(#[from] ExaError),
@@ -31,8 +33,6 @@ pub enum Error {
 #[derive(Debug, ThisError)]
 pub enum DriverError {
     #[error(transparent)]
-    BindError(#[from] BindError),
-    #[error(transparent)]
     DataError(#[from] DataError),
     #[error(transparent)]
     RequestError(#[from] RequestError),
@@ -44,6 +44,15 @@ pub enum DriverError {
     ResponseMismatch(&'static str),
 }
 
+/// Query related errors.
+#[derive(Debug, ThisError)]
+pub enum QueryErr {
+    #[error(transparent)]
+    BindError(#[from] BindError),
+    #[error(transparent)]
+    QueryError(#[from] ExaError),
+}
+
 #[derive(Debug, ThisError)]
 pub enum BindError {
     #[error("Missing parameter to bind for {0}")]
@@ -52,6 +61,34 @@ pub enum BindError {
     SerializeError,
     #[error(transparent)]
     DeserializeError(#[from] serde_json::error::Error),
+}
+
+/// Implementation for an actual error occurring on a query
+#[derive(Debug, ThisError)]
+#[error("Error: {source:#?}\nQuery: {query:?}")]
+pub struct QueryError {
+    query: Option<String>,
+    source: QueryErr,
+}
+
+impl QueryError {
+    pub(crate) fn new<T>(source: QueryErr, query: T) -> Self
+    where
+        T: AsRef<str>,
+    {
+        let query = Some(query.as_ref().to_owned());
+        Self { query, source }
+    }
+
+    pub(crate) fn map_err<T>(err: Error, query: T) -> Error
+    where
+        T: AsRef<str>,
+    {
+        match err {
+            Error::ExasolError(e) => Error::QueryError(QueryError::new(e.into(), query)),
+            _ => err,
+        }
+    }
 }
 
 /// Data processing related errors.

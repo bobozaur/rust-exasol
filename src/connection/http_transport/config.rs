@@ -452,7 +452,7 @@ impl HttpTransportConfig {
                 addr_sender: addr_sender.clone(),
                 encryption: use_encryption,
                 compression: use_compression,
-                timeout: timeout.clone(),
+                timeout,
             })
             .collect()
     }
