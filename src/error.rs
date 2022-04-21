@@ -46,7 +46,7 @@ pub enum DriverError {
 
 /// Query related errors.
 #[derive(Debug, ThisError)]
-pub enum QueryErr {
+pub enum QueryErrorImpl {
     #[error(transparent)]
     BindError(#[from] BindError),
     #[error(transparent)]
@@ -65,18 +65,18 @@ pub enum BindError {
 
 /// Implementation for an actual error occurring on a query
 #[derive(Debug, ThisError)]
-#[error("Error: {source:#?}\nQuery: {query:?}")]
+#[error("Error: {source:#?}\nQuery: {query}")]
 pub struct QueryError {
-    query: Option<String>,
-    source: QueryErr,
+    query: String,
+    source: QueryErrorImpl,
 }
 
 impl QueryError {
-    pub(crate) fn new<T>(source: QueryErr, query: T) -> Self
+    pub(crate) fn new<T>(source: QueryErrorImpl, query: T) -> Self
     where
         T: AsRef<str>,
     {
-        let query = Some(query.as_ref().to_owned());
+        let query = query.as_ref().to_owned();
         Self { query, source }
     }
 
