@@ -1,7 +1,9 @@
 use super::{Attributes, MaybeCompressedWs, ReqResult, ResponseData};
 use super::{Certificate, ConResult};
-use crate::error::{ConnectionError, DriverError, Result};
-use crate::{ConOpts, ProtocolVersion};
+use crate::con_opts::LoginKind;
+use crate::error::{ConnectionError, DriverError, Error, Result};
+use crate::ConOpts;
+use log::{debug, error};
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::RsaPublicKey;
 use serde_json::{json, Value};
@@ -73,13 +75,22 @@ impl ExaWebSocket {
 
     /// Sends a request and waits for its response.
     pub fn do_request(&mut self, payload: Value) -> Result<Option<ResponseData>> {
-        let resp = self
+        debug!("Sending websocket JSON request:\n{:#?}", &payload);
+
+        let resp: Result<(Option<ResponseData>, Option<Attributes>)> = self
             .ws
             .send(payload)
             .and_then(|_| self.ws.recv())
-            .map_err(DriverError::RequestError)?;
+            .map_err(DriverError::RequestError)
+            .map_err(Error::DriverError)
+            .and_then(|r| r.try_into());
 
-        let (data, attr): (Option<ResponseData>, Option<Attributes>) = resp.try_into()?;
+        match &resp {
+            Ok((rd, attr)) => debug!("{:#?}\n{:#?}", attr, rd),
+            Err(e) => error!("{:#?}", e),
+        }
+
+        let (data, attr) = resp?;
         if let Some(attributes) = attr {
             self.exa_attr.extend(attributes.map)
         }
@@ -139,8 +150,8 @@ impl ExaWebSocket {
 
     /// Gets the public key from Exasol
     /// Used during authentication for encrypting the password
-    fn get_public_key(&mut self, protocol_version: ProtocolVersion) -> Result<RsaPublicKey> {
-        let payload = json!({"command": "login", "protocolVersion": protocol_version});
+    fn get_public_key(&mut self, opts: &ConOpts) -> Result<RsaPublicKey> {
+        let payload = json!({"command": "login", "protocolVersion": opts.protocol_version()});
         let pem: String = self.get_resp_data(payload).and_then(|p| p.try_into())?;
 
         Ok(RsaPublicKey::from_pkcs1_pem(&pem)
@@ -153,13 +164,30 @@ impl ExaWebSocket {
     ///
     /// Login is always uncompressed. If compression is enabled, it is set afterwards.
     fn login(&mut self, opts: ConOpts) -> Result<()> {
-        // Encrypt password using server's public key
-        let key = self.get_public_key(opts.protocol_version())?;
-        let payload = opts.into_value(key).map_err(DriverError::ConnectionError)?;
+        match opts.login_kind() {
+            LoginKind::Credentials(_) => self.login_creds(opts),
+            _ => self.login_token(opts),
+        }
+    }
 
-        // Send login request
+    /// Logs in with credentials (username and password).
+    fn login_creds(&mut self, mut opts: ConOpts) -> Result<()> {
+        let key = self.get_public_key(&opts)?;
+        opts.encrypt_password(key)
+            .map_err(DriverError::ConnectionError)?;
+
+        let payload = json!(opts);
+        self.do_request(payload)?;
+        Ok(())
+    }
+
+    /// Logs in using a token.
+    fn login_token(&mut self, opts: ConOpts) -> Result<()> {
+        let payload = json!({"command": "loginToken", "protocolVersion": opts.protocol_version()});
         self.do_request(payload)?;
 
+        let payload = json!(opts);
+        self.do_request(payload)?;
         Ok(())
     }
 }

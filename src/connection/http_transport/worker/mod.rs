@@ -3,6 +3,7 @@ use super::TRANSPORT_BUFFER_SIZE;
 use super::{ExaRowReader, ExaRowWriter, HttpTransportConfig, TransportResult};
 use crate::error::HttpTransportError;
 use crossbeam::channel::{Receiver, Sender};
+use log::debug;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -170,6 +171,7 @@ pub trait HttpTransportWorker {
 
     /// Starts HTTP Transport
     fn start(&mut self, mut config: HttpTransportConfig) -> TransportResult<()> {
+        debug!("Worker starting...");
         // Initialize stream and send internal Exasol addresses to parent thread
         let timeout = config.take_timeout();
         let socket = Self::initialize(

@@ -1,100 +1,23 @@
 mod address;
+mod credentials;
 mod protocol_version;
 
 use crate::error::ConnectionError;
 use address::AddressList;
+pub use credentials::{Credentials, LoginKind};
 use lazy_regex::regex;
 pub use protocol_version::ProtocolVersion;
-use rand::rngs::OsRng;
 use regex::Captures;
-use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
-use serde_json::{json, Value};
+use rsa::RsaPublicKey;
+use serde::ser::{Serialize, SerializeMap, Serializer};
+use serde_json::json;
+use std::collections::HashMap;
 use std::env;
-use std::fmt;
-use std::fmt::{Display, Formatter};
+
+const FIXED_CON_OPTS_LEN: usize = 7;
 
 // Convenience alias
 type ConResult<T> = std::result::Result<T, ConnectionError>;
-
-/// Will box this for efficiency
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct InnerOpts {
-    dsn: Option<String>,
-    user: Option<String>,
-    password: Option<String>,
-    schema: Option<String>,
-    port: u16,
-    protocol_version: ProtocolVersion,
-    client_name: String,
-    client_version: String,
-    client_os: String,
-    fetch_size: usize,
-    query_timeout: u64,
-    use_encryption: bool,
-    use_compression: bool,
-    lowercase_columns: bool,
-    autocommit: bool,
-}
-
-impl Display for InnerOpts {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "DSN: {}\n\
-             User: {}\n\
-             Schema: {}\n\
-             Port: {}\n\
-             Protocol version: {}\n\
-             Client name: {}\n\
-             Client version: {}\n\
-             Client OS: {}\n\
-             Fetch size: {}\n\
-             Query timeout: {}\n\
-             Use encryption: {}\n\
-             Use compression: {}\n\
-             Lowercase columns: {}\n
-             Autocommit: {}",
-            self.dsn.as_deref().unwrap_or(""),
-            self.user.as_deref().unwrap_or(""),
-            self.schema.as_deref().unwrap_or(""),
-            self.port,
-            self.protocol_version,
-            self.client_name,
-            self.client_version,
-            self.client_os,
-            self.fetch_size,
-            self.query_timeout,
-            self.use_encryption,
-            self.use_compression,
-            self.lowercase_columns,
-            self.autocommit
-        )
-    }
-}
-
-impl Default for InnerOpts {
-    fn default() -> Self {
-        let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "UNKNOWN".to_owned());
-
-        Self {
-            dsn: None,
-            user: None,
-            password: None,
-            schema: None,
-            port: 8563,
-            protocol_version: ProtocolVersion::V3,
-            client_name: format!("{} {}", "Rust Exasol", crate_version),
-            client_version: crate_version,
-            client_os: env::consts::OS.to_owned(),
-            fetch_size: 5 * 1024 * 1024,
-            query_timeout: 0,
-            use_encryption: false,
-            use_compression: false,
-            lowercase_columns: true,
-            autocommit: true,
-        }
-    }
-}
 
 /// Connection options for [Connection](crate::Connection)
 /// The DSN may or may not contain a port - if it does not,
@@ -113,12 +36,45 @@ impl Default for InnerOpts {
 ///  opts.set_schema(Some("test_schema"));
 ///  opts.set_autocommit(false);
 /// ```
-#[derive(Debug, Default, Clone, Eq, PartialEq)]
-pub struct ConOpts(Box<InnerOpts>);
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ConOpts {
+    dsn: Option<String>,
+    login_kind: LoginKind,
+    schema: Option<String>,
+    port: u16,
+    protocol_version: ProtocolVersion,
+    client_name: String,
+    client_version: String,
+    client_os: String,
+    fetch_size: usize,
+    query_timeout: u64,
+    use_encryption: bool,
+    use_compression: bool,
+    lowercase_columns: bool,
+    autocommit: bool,
+}
 
-impl Display for ConOpts {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+impl Default for ConOpts {
+    fn default() -> Self {
+        let crate_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "UNKNOWN".to_owned());
+        let encryption = cfg!(any(feature = "native-tls-basic", feature = "rustls"));
+
+        Self {
+            dsn: None,
+            login_kind: LoginKind::default(),
+            schema: None,
+            port: 8563,
+            protocol_version: ProtocolVersion::V3,
+            client_name: format!("{} {}", "Rust Exasol", crate_version),
+            client_version: crate_version,
+            client_os: env::consts::OS.to_owned(),
+            fetch_size: 5 * 1024 * 1024,
+            query_timeout: 0,
+            use_encryption: encryption,
+            use_compression: false,
+            lowercase_columns: true,
+            autocommit: true,
+        }
     }
 }
 
@@ -132,7 +88,7 @@ impl ConOpts {
     /// DSN (defaults to `None`)
     #[inline]
     pub fn dsn(&self) -> Option<&str> {
-        self.0.dsn.as_deref()
+        self.dsn.as_deref()
     }
 
     #[inline]
@@ -140,24 +96,24 @@ impl ConOpts {
     where
         T: Into<String>,
     {
-        self.0.dsn = Some(dsn.into())
+        self.dsn = Some(dsn.into())
     }
 
     /// Port (defaults to `8563`).
     #[inline]
     pub fn port(&self) -> u16 {
-        self.0.port
+        self.port
     }
 
     #[inline]
     pub fn set_port(&mut self, port: u16) {
-        self.0.port = port
+        self.port = port
     }
 
     /// Schema (defaults to `None`).
     #[inline]
     pub fn schema(&self) -> Option<&str> {
-        self.0.schema.as_deref()
+        self.schema.as_deref()
     }
 
     #[inline]
@@ -165,74 +121,57 @@ impl ConOpts {
     where
         T: Into<String>,
     {
-        self.0.schema = schema.map(|s| s.into())
+        self.schema = schema.map(|s| s.into())
     }
 
     /// User (defaults to `None`).
     #[inline]
-    pub fn user(&self) -> Option<&str> {
-        self.0.user.as_deref()
+    pub fn login_kind(&self) -> &LoginKind {
+        &self.login_kind
     }
 
     #[inline]
-    pub fn set_user<T>(&mut self, user: T)
-    where
-        T: Into<String>,
-    {
-        self.0.user = Some(user.into())
-    }
-
-    /// Password (defaults to `None`).
-    #[inline]
-    pub fn password(&self) -> Option<&str> {
-        self.0.password.as_deref()
-    }
-
-    #[inline]
-    pub fn set_password<T>(&mut self, password: T)
-    where
-        T: Into<String>,
-    {
-        self.0.password = Some(password.into())
+    pub fn set_login_kind(&mut self, creds: LoginKind) {
+        self.login_kind = creds
     }
 
     /// Protocol Version (defaults to `ProtocolVersion::V3`).
     #[inline]
     pub fn protocol_version(&self) -> ProtocolVersion {
-        self.0.protocol_version
+        self.protocol_version
     }
 
     #[inline]
     pub fn set_protocol_version(&mut self, pv: ProtocolVersion) {
-        self.0.protocol_version = pv
+        self.protocol_version = pv
     }
 
     /// Data fetch size in bytes (defaults to `5,242,880 = 5 * 1024 * 1024`).
     #[inline]
     pub fn fetch_size(&self) -> usize {
-        self.0.fetch_size
+        self.fetch_size
     }
 
     #[inline]
     pub fn set_fetch_size(&mut self, fetch_size: usize) {
-        self.0.fetch_size = fetch_size
+        self.fetch_size = fetch_size
     }
 
     /// Query timeout (defaults to `0`, which means it's disabled).
     #[inline]
     pub fn query_timeout(&self) -> u64 {
-        self.0.query_timeout
+        self.query_timeout
     }
 
     #[inline]
     pub fn set_query_timeout(&mut self, timeout: u64) {
-        self.0.query_timeout = timeout
+        self.query_timeout = timeout
     }
 
     /// Encryption flag (defaults to `false`).
     #[inline]
     pub fn encryption(&self) -> bool {
-        self.0.use_encryption
+        self.use_encryption
     }
 
     /// Sets encryption by allowing the use of a secure websocket (WSS).
@@ -240,7 +179,7 @@ impl ConOpts {
     #[allow(unused)]
     pub fn set_encryption(&mut self, flag: bool) {
         if cfg!(any(feature = "native-tls-basic", feature = "rustls")) {
-            self.0.use_encryption = flag;
+            self.use_encryption = flag;
         } else {
             panic!("native-tls or rustls features must be enabled to set encryption")
         }
@@ -249,7 +188,7 @@ impl ConOpts {
     /// Compression flag (defaults to `false`).
     #[inline]
     pub fn compression(&self) -> bool {
-        self.0.use_compression
+        self.use_compression
     }
 
     /// Sets the compression flag.
@@ -257,7 +196,7 @@ impl ConOpts {
     #[allow(unused)]
     pub fn set_compression(&mut self, flag: bool) {
         if cfg!(feature = "flate2") {
-            self.0.use_compression = flag;
+            self.use_compression = flag;
         } else {
             panic!("flate2 feature must be enabled to set compression")
         }
@@ -266,24 +205,31 @@ impl ConOpts {
     /// Lowercase column names flag (defaults to `true`)
     #[inline]
     pub fn lowercase_columns(&self) -> bool {
-        self.0.lowercase_columns
+        self.lowercase_columns
     }
 
     #[inline]
     pub fn set_lowercase_columns(&mut self, flag: bool) {
-        self.0.lowercase_columns = flag;
+        self.lowercase_columns = flag;
     }
 
     /// Autocommit flag (defaults to `true`).
     #[inline]
     pub fn autocommit(&self) -> bool {
-        self.0.autocommit
+        self.autocommit
     }
 
     /// Sets the autocommit flag
     #[inline]
     pub fn set_autocommit(&mut self, flag: bool) {
-        self.0.autocommit = flag
+        self.autocommit = flag
+    }
+
+    /// Encrypts the underlying password if there is one.
+    /// Access or refresh tokens could be used instead.
+    #[inline]
+    pub(crate) fn encrypt_password(&mut self, key: RsaPublicKey) -> ConResult<()> {
+        self.login_kind.encrypt_password(key)
     }
 
     /// Convenience method for determining the websocket type.
@@ -308,8 +254,7 @@ impl ConOpts {
                     "
         );
 
-        self.0
-            .dsn
+        self.dsn
             .as_deref()
             .and_then(|dsn| re.captures(dsn))
             .ok_or(ConnectionError::InvalidDSN)
@@ -322,7 +267,7 @@ impl ConOpts {
                 let fingerprint = Self::parse_dsn_part(&cap, 5).to_owned();
                 let port = Self::parse_dsn_part(&cap, 6)
                     .parse::<u16>()
-                    .unwrap_or(self.0.port);
+                    .unwrap_or(self.port);
 
                 // Create a new vec for storing hosts
                 let mut hosts = Vec::new();
@@ -349,36 +294,48 @@ impl ConOpts {
             })
     }
 
-    /// Encrypts the password with the provided key
-    pub(crate) fn encrypt_password(&self, public_key: RsaPublicKey) -> ConResult<String> {
-        let mut rng = OsRng;
-        let padding = PaddingScheme::new_pkcs1v15_encrypt();
-        let pass_bytes = self.0.password.as_deref().unwrap_or("").as_bytes();
-        let enc_pass = base64::encode(public_key.encrypt(&mut rng, padding, pass_bytes)?);
-        Ok(enc_pass)
-    }
-
-    pub(crate) fn into_value(self, key: RsaPublicKey) -> ConResult<Value> {
-        Ok(json!({
-        "username": self.0.user,
-        "password": self.encrypt_password(key)?,
-        "driverName": &self.0.client_name,
-        "clientName": &self.0.client_name,
-        "clientVersion": self.0.client_version,
-        "clientOs": self.0.client_os,
-        "clientRuntime": "Rust",
-        "useCompression": self.0.use_compression,
-        "attributes": {
-                    "currentSchema": self.0.schema.unwrap_or_default(),
-                    "autocommit": self.0.autocommit,
-                    "queryTimeout": self.0.query_timeout
-                    }
-        }))
-    }
-
     /// Used for retrieving an optional DSN part, or an empty string if missing
     #[inline]
     fn parse_dsn_part<'a>(cap: &'a Captures, index: usize) -> &'a str {
         cap.get(index).map_or("", |s| s.as_str())
+    }
+}
+
+impl Serialize for ConOpts {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let creds_len = match self.login_kind() {
+            LoginKind::Credentials(_) => 2,
+            _ => 1,
+        };
+
+        let attr = HashMap::from([
+            ("currentSchema", json!(self.schema().unwrap_or_default())),
+            ("autocommit", json!(self.autocommit())),
+            ("queryTimeout", json!(self.query_timeout())),
+        ]);
+
+        let mut opts = serializer.serialize_map(Some(FIXED_CON_OPTS_LEN + creds_len))?;
+
+        match self.login_kind() {
+            LoginKind::AccessToken(token) => opts.serialize_entry("accessToken", token)?,
+            LoginKind::RefreshToken(token) => opts.serialize_entry("refreshToken", token)?,
+            LoginKind::Credentials(cr) => {
+                opts.serialize_entry("username", cr.username())?;
+                opts.serialize_entry("password", cr.password())?;
+            }
+        }
+
+        opts.serialize_entry("driverName", self.client_name.as_str())?;
+        opts.serialize_entry("clientName", self.client_name.as_str())?;
+        opts.serialize_entry("clientVersion", self.client_version.as_str())?;
+        opts.serialize_entry("clientOs", self.client_os.as_str())?;
+        opts.serialize_entry("clientRuntime", "Rust")?;
+        opts.serialize_entry("useCompression", &self.compression())?;
+        opts.serialize_entry("attributes", &attr)?;
+
+        opts.end()
     }
 }

@@ -1,89 +1,26 @@
 mod config;
+mod reader;
 mod stream;
 mod worker;
+mod writer;
 
 use super::TRANSPORT_BUFFER_SIZE;
 use crate::error::{DriverError, HttpTransportError, Result};
 use crate::Connection;
 use config::HttpTransportConfig;
 pub use config::{ExportOpts, HttpTransportOpts, ImportOpts, TrimType};
-use crossbeam::channel::{IntoIter, Receiver, Sender};
+use crossbeam::channel::{Receiver, Sender};
 use crossbeam::thread::{Scope, ScopedJoinHandle};
+use log::debug;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use std::io::{Error, ErrorKind, Read, Write};
+pub use reader::ExaReader;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use worker::reader::ExaRowReader;
 use worker::writer::ExaRowWriter;
 use worker::{HttpExportThread, HttpImportThread, HttpTransportWorker};
-
-pub struct ExaWriter {
-    sender: Sender<Vec<u8>>,
-    buf: Vec<u8>,
-}
-
-impl ExaWriter {
-    pub fn new(sender: Sender<Vec<u8>>) -> Self {
-        Self {
-            sender,
-            buf: Vec::with_capacity(TRANSPORT_BUFFER_SIZE),
-        }
-    }
-}
-
-impl Write for ExaWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.buf.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        let mut old_buf = Vec::with_capacity(TRANSPORT_BUFFER_SIZE);
-        std::mem::swap(&mut self.buf, &mut old_buf);
-        self.sender.send(old_buf).map_err(|_| {
-            Error::new(
-                ErrorKind::BrokenPipe,
-                "Could not send data chunk to worker thread",
-            )
-        })
-    }
-}
-
-pub struct ExaReader {
-    receiver: IntoIter<Vec<u8>>,
-    buf: Vec<u8>,
-    pos: usize,
-}
-
-impl ExaReader {
-    pub fn new(receiver: Receiver<Vec<u8>>) -> Self {
-        Self {
-            receiver: receiver.into_iter(),
-            buf: Vec::new(),
-            pos: 0,
-        }
-    }
-}
-
-impl Read for ExaReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut num_bytes = (&self.buf[self.pos..]).read(buf)?;
-
-        if num_bytes == 0 {
-            match self.receiver.next() {
-                None => num_bytes = 0,
-                Some(v) => {
-                    self.buf = v;
-                    self.pos = 0;
-                    num_bytes = (&self.buf[self.pos..]).read(buf)?;
-                }
-            }
-        }
-
-        self.pos += num_bytes;
-        Ok(num_bytes)
-    }
-}
+pub use writer::ExaWriter;
 
 /// Convenience alias
 pub type TransportResult<T> = std::result::Result<T, HttpTransportError>;
@@ -328,6 +265,7 @@ pub trait HttpTransportJob {
             let (con, cb) = self.get_parts();
             let (hosts, num_threads) = Self::get_node_addresses(con, &opts)?;
 
+            debug!("Starting worker orchestrator...");
             // Start orchestrator thread
             let handle = s.spawn(move |s| {
                 Self::orchestrate(s, worker_channel, hosts, num_threads, opts, con)
@@ -386,6 +324,7 @@ pub trait HttpTransportJob {
         // Start worker threads
         let handles = Self::start_workers(s, configs, num_threads, worker_channel);
 
+        debug!("Orchestrator waiting for internal Exasol addresses...");
         // Generate makeshift IMPORT/EXPORT filenames and locations
         let files = Self::generate_filenames(enc, cmp, num_threads, &addr_receiver);
 
@@ -399,6 +338,7 @@ pub trait HttpTransportJob {
         // connected and the query is ready for execution.
         barrier.wait();
 
+        debug!("Orchestrator received addresses! Running query...");
         // Executing the query blocks until the transport is over
         let query_res = files.and_then(|hosts| {
             let query = Self::generate_query(opts, hosts);
@@ -448,6 +388,7 @@ pub trait HttpTransportJob {
     where
         <Self::Worker as HttpTransportWorker>::Channel: 'a,
     {
+        debug!("Orchestrator will start {} workers", num_threads);
         configs
             .into_iter()
             .fold(Vec::with_capacity(num_threads), |mut handles, config| {

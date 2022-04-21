@@ -1,4 +1,4 @@
-use crate::con_opts::ConOpts;
+use crate::con_opts::{ConOpts, Credentials, LoginKind};
 use crate::connection::http_transport::{ExaReader, ExaWriter};
 use crate::error::{ConnectionError, DriverError, Error, HttpTransportError};
 use crate::error::{QueryError, RequestError, Result};
@@ -9,6 +9,7 @@ use exa_ws::ExaWebSocket;
 pub use http_transport::{ExportOpts, HttpTransportOpts, ImportOpts, TrimType};
 use http_transport::{HttpExportJob, HttpImportJob, HttpTransportJob};
 use lazy_regex::regex;
+use log::{error, info};
 use regex::Captures;
 use response::{Attributes, FetchedData, QueryResultDe, Response, ResponseData, ResultSetDe};
 pub use response::{Column, DataType, ExaError, PreparedStatement};
@@ -70,9 +71,9 @@ where
 {
     let mut opts = ConOpts::new();
     opts.set_dsn(dsn);
-    opts.set_user(user);
-    opts.set_password(password);
     opts.set_schema(Some(schema));
+    let login_kind = LoginKind::Credentials(Credentials::new(user, password));
+    opts.set_login_kind(login_kind);
 
     Connection::new(opts)
 }
@@ -1212,11 +1213,21 @@ impl Connection {
     where
         F: Fn(&str, &str, u16) -> ConResult<Ws>,
     {
+        info!(
+            "Trying to connect websocket to {}://{}:{}",
+            prefix, &addr, port
+        );
         let res = cb(prefix, &addr, port);
 
         match res {
-            Ok(ws) => ControlFlow::Break((ws, addr, port)),
-            Err(e) => ControlFlow::Continue(e),
+            Ok(ws) => {
+                info!("Websocket connected!");
+                ControlFlow::Break((ws, addr, port))
+            }
+            Err(e) => {
+                error!("Could not connect websocket:\n {:#?}", &e);
+                ControlFlow::Continue(e)
+            }
         }
     }
 
