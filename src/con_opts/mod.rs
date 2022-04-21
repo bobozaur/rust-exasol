@@ -40,12 +40,11 @@ type ConResult<T> = std::result::Result<T, ConnectionError>;
 /// autocommit: true
 ///
 /// ```
-///  use exasol::ConOpts;
+///  use exasol::{ConOpts, LoginKind, Credentials};
 ///
 ///  let mut opts = ConOpts::new(); // calls default() under the hood
 ///  opts.set_dsn("test_dsn");
-///  opts.set_user("test_user");
-///  opts.set_password("test_password");
+///  opts.set_login_kind(LoginKind::Credentials(Credentials::new("test_user", "test_password")));
 ///  opts.set_schema(Some("test_schema"));
 ///  opts.set_autocommit(false);
 /// ```

@@ -31,13 +31,9 @@ __rustls = {version = "0.20.4", optional = true , package = "rustls"}
 flate2 = { version = "1.0.22", optional = true }
 
 [features]
-native-tls-basic = ["rcgen", "__native_tls", "tungstenite/native-tls"]
-rustls_dangerous = ["__rustls/dangerous_configuration"]
-rustls = ["rcgen", "__rustls", "tungstenite/__rustls-tls"]
+native-tls-basic = ["rcgen", "__native_tls", "tungstenite/native-tls"] # meant for internal use
+rustls = ["rcgen", "__rustls", "tungstenite/__rustls-tls"] # meant for internal use
 native-tls = ["tungstenite/native-tls", "native-tls-basic"]
 native-tls-vendored = ["tungstenite/native-tls-vendored", "native-tls-basic"]
 rustls-tls-webpki-roots = ["tungstenite/rustls-tls-webpki-roots", "rustls"]
 rustls-tls-native-roots = ["tungstenite/rustls-tls-native-roots", "rustls"]
-
-[dev-dependencies]
-exasol = { path = ".", features = ["native-tls", "rustls-tls-webpki-roots", "rustls_dangerous", "flate2"] }

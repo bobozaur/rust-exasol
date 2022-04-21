@@ -31,7 +31,7 @@
 //!
 //! // Retrieving data associated with the result set.
 //! // A Vec of rows is returned, and the row type in this case will be Vec<String>.
-//! let data: Vec<Vec<String>> = exa_con.iter_result(&mut result).unwrap();
+//! let data = exa_con.iter_result(&mut result).collect::<Result<Vec<Vec<String>>>>().unwrap();
 //! ```
 //!
 //! The [Connection::iter_result] method returns a lazy iterator over a result's rows. Only a given
@@ -66,7 +66,7 @@
 //!     // Only enough calls necessary to retrieve 100 rows will be made to the database.
 //!     // Any leftover data in the chunk will still be present in the ResultSet buffer.
 //!     // and can be used in later retrievals.
-//!     let data: Vec<(String, String, u16)> = exa_con.fetch(&mut result, 100).unwrap();
+//!     let data: Vec<(String, String, u16)> = exa_con.iter_result(&mut result).take(100).collect::<Result<_>>().unwrap();
 //!     // do stuff with data
 //!
 //!     counter += 1;
@@ -111,13 +111,13 @@
 //! let mut result = exa_con.execute("SELECT 1, 2 UNION ALL SELECT 1, 2;").unwrap();
 //!
 //! // Change the expected row type with the turbofish notation
-//! let mut data = exa_con.fetch::<[u8; 2]>(&mut result, 1).unwrap();
+//! let mut data: Vec<[u8; 2]> = exa_con.iter_result(&mut result).collect::<Result<_>>().unwrap();
 //! let row1 = data[0];
 //!
 //! // You can also rely on type inference.
 //! // Nothing stops you from changing row types
 //! // on the same result set.
-//! let mut data: Vec<Vec<u8>> = exa_con.fetch(&mut result, 1).unwrap();;
+//! let mut data: Vec<Vec<u8>> = exa_con.iter_result(&mut result).collect::<Result<_>>().unwrap();;
 //! let row2 = data.pop();
 //!
 //! let mut result = exa_con.execute("SELECT 1 as col1, 2 as col2, 3 as col3 \
@@ -131,7 +131,7 @@
 //!     col3: u8,
 //! }
 //!
-//! let data = exa_con.iter_result::<Test>(&mut result).unwrap();
+//! let data = exa_con.iter_result::<Test>(&mut result).collect::<Result<Vec<_>>>().unwrap();
 //! for row in data {
 //!     // do stuff with row
 //! }
@@ -184,7 +184,7 @@
 //! The [Connection] struct can be directly instantiated with the use of [ConOpts].
 //!
 //! ```
-//! use exasol::{ConOpts, Connection};
+//! use exasol::*;
 //! use std::env;
 //!
 //! let dsn = env::var("EXA_DSN").unwrap();
@@ -195,8 +195,7 @@
 //! // Only providing fields for which we want custom values
 //! let mut opts = ConOpts::new();
 //! opts.set_dsn(dsn);
-//! opts.set_user(user);
-//! opts.set_password(password);
+//! opts.set_login_kind(LoginKind::Credentials(Credentials::new(user, password)));
 //! opts.set_schema(Some(schema));
 //!
 //! let exa_con = Connection::new(opts).unwrap();
@@ -216,7 +215,7 @@
 //! Attempting to use these methods without their respective features enabled results in panics.
 //!
 //! ``` should_panic
-//! # use exasol::{ConOpts, Connection};
+//! # use exasol::*;
 //! # use std::env;
 //! #
 //! # let dsn = env::var("EXA_DSN").unwrap();
@@ -227,8 +226,7 @@
 //! let mut opts = ConOpts::new();
 //!
 //! opts.set_dsn(dsn);
-//! opts.set_user(user);
-//! opts.set_password(password);
+//! opts.set_login_kind(LoginKind::Credentials(Credentials::new(user, password)));
 //! opts.set_schema(Some(schema));
 //!
 //! opts.set_encryption(true);

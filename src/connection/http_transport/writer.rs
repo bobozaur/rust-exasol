@@ -3,7 +3,7 @@ use crossbeam::channel::Sender;
 use std::io::{Error, ErrorKind, Write};
 
 /// HTTP Transport writer that can be used
-/// in custom closures in [Connection::import_from_closure].
+/// in custom closures in [Connection::import_from_closure](crate::Connection).
 pub struct ExaWriter {
     sender: Sender<Vec<u8>>,
     buf: Vec<u8>,

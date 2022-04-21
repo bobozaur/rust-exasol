@@ -84,7 +84,6 @@ where
 ///
 /// As a best practice, though, put some effort into manually closing the results and
 /// prepared statements created so as not to bloat the connection.
-#[doc(hidden)]
 pub struct Connection {
     driver_attr: DriverAttributes,
     ws: ExaWebSocket,
@@ -146,7 +145,7 @@ impl Connection {
     /// an error is returned.
     /// ```
     /// use std::env;
-    /// use exasol::{ConOpts, Connection};
+    /// use exasol::*;
     ///
     /// let dsn = env::var("EXA_DSN").unwrap();
     /// let schema = env::var("EXA_SCHEMA").unwrap();
@@ -155,8 +154,7 @@ impl Connection {
     ///
     /// let mut opts = ConOpts::new();
     /// opts.set_dsn(dsn);
-    /// opts.set_user(user);
-    /// opts.set_password(password);
+    /// opts.set_login_kind(LoginKind::Credentials(Credentials::new(user, password)));
     /// opts.set_schema(None::<String>);
     ///
     /// let mut exa_con = Connection::new(opts).unwrap();
@@ -223,7 +221,7 @@ impl Connection {
         self.driver_attr.fetch_size
     }
 
-    /// Sets the fetch size in bytes when retrieving [ResultSet](crate::query::ResultSet) chunks
+    /// Sets the fetch size in bytes when retrieving [ResultSet] chunks.
     ///
     /// ```
     /// # use exasol::connect;
@@ -261,8 +259,7 @@ impl Connection {
         self.driver_attr.lowercase_columns
     }
 
-    /// Sets whether the [ResultSet](crate::query::ResultSet) [Column](crate::response::Column)
-    /// names will be implicitly cast to lowercase
+    /// Sets whether the [ResultSet] [Column] names will be implicitly cast to lowercase.
     ///
     /// ```
     /// # use exasol::connect;
@@ -513,10 +510,7 @@ impl Connection {
     /// #
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
     /// let mut result = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
-    /// let data: Vec<Vec<String>> = exa_con.iter_result(&mut result).unwrap();
-    ///
-    /// let mut result2 = exa_con.execute("SELECT '1', '2', '3' UNION ALL SELECT '4', '5', '6'").unwrap();
-    /// let data2 = exa_con.iter_result(&mut result2).collect::<Result<Vec<Vec<String>>>>().unwrap();
+    /// let data = exa_con.iter_result(&mut result).collect::<Result<Vec<Vec<String>>>>().unwrap();
     /// assert_eq!(data.len(), 2);
     /// ```
     pub fn iter_result<'a, T: DeserializeOwned>(
@@ -531,7 +525,7 @@ impl Connection {
 
     /// HTTP Transport export with a closure that deserializes rows into a `Vec`.
     /// ```
-    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::{connect, ExportOpts, QueryResult};
     /// # use exasol::error::Result;
     /// # use serde_json::Value;
     /// # use std::env;
@@ -541,7 +535,9 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result = exa_con.export_to_vec("SELECT * FROM EXA_RUST_TEST LIMIT 1000", None).unwrap();
+    /// let mut opts = ExportOpts::new();
+    /// opts.set_query("SELECT 'a', 'b', 1 UNION ALL SELECT 'c', 'd', 2;");
+    /// let result = exa_con.export_to_vec(opts).unwrap();
     ///
     /// result.into_iter().take(5).for_each(|v: (String, String, u32)| println!("{:?}", v))
     /// ```
@@ -609,7 +605,7 @@ impl Connection {
     }
 
     /// HTTP Transport export implementation that can take any closure and an instance
-    /// of [ExportOpts]. The closure must make use of a reader implementing [Read].
+    /// of [ExportOpts]. The closure must make use of a reader implementing [Read](std::io::Read).
     /// For examples check [Connection::export_to_file] and [Connection::export_to_vec].
     pub fn export_to_closure<F, T>(&mut self, callback: F, opts: ExportOpts) -> Result<T>
     where
@@ -626,7 +622,7 @@ impl Connection {
     /// HTTP Transport import with a closure that serializes rows from a type implementing
     /// [IntoIterator].
     /// ```
-    /// # use exasol::{connect, QueryResult};
+    /// # use exasol::*;
     /// # use exasol::error::Result;
     /// # use serde_json::Value;
     /// # use std::env;
@@ -636,8 +632,12 @@ impl Connection {
     /// # let user = env::var("EXA_USER").unwrap();
     /// # let password = env::var("EXA_PASSWORD").unwrap();
     /// let mut exa_con = connect(&dsn, &schema, &user, &password).unwrap();
-    /// let result: Vec<(String, String, u32)> = exa_con.export_to_vec("SELECT * FROM EXA_RUST_TEST LIMIT 1000", None).unwrap();
-    /// exa_con.import_from_iter("EXA_RUST_TEST", result, None).unwrap();
+    /// let mut export_opts = ExportOpts::new();
+    /// export_opts.set_query("SELECT 'a', 'b', 1 UNION ALL SELECT 'c', 'd', 2;");
+    /// let result: Vec<(String, String, u32)> = exa_con.export_to_vec(export_opts).unwrap();
+    /// let mut import_opts = ImportOpts::new();
+    /// import_opts.set_table_name("EXA_RUST_TEST");
+    /// exa_con.import_from_iter(result, import_opts).unwrap();
     /// ```
     pub fn import_from_iter<I, T>(&mut self, iter: I, mut opts: ImportOpts) -> Result<()>
     where
@@ -708,7 +708,7 @@ impl Connection {
     }
 
     /// HTTP Transport import implementation that can take any closure and an instance
-    /// of [ImportOpts]. The closure must make use of a writer implementing [Write].
+    /// of [ImportOpts]. The closure must make use of a writer implementing [Write](std::io::Write).
     /// For examples check [Connection::import_from_file] and [Connection::import_from_iter].
     pub fn import_from_closure<F, T>(&mut self, callback: F, opts: ImportOpts) -> Result<T>
     where

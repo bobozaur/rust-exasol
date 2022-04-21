@@ -4,6 +4,7 @@
 /// But this is mainly to test that the code compiles with the given rustls features.
 
 #[cfg(test)]
+#[cfg(all(feature = "rustls", feature = "flate2"))]
 #[allow(unused)]
 mod tests {
     use __rustls::client::{ServerCertVerified, ServerCertVerifier};
@@ -40,8 +41,7 @@ mod tests {
         let password = env::var("EXA_PASSWORD").unwrap();
 
         let mut opts = ConOpts::new();
-        opts.set_user(user);
-        opts.set_password(password);
+        opts.set_login_kind(LoginKind::Credentials(Credentials::new(user, password)));
         opts.set_dsn(dsn);
         opts.set_schema(Some(schema));
 
