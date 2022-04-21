@@ -8,23 +8,24 @@ Please find the documentation [here](https://docs.rs/exasol/latest/exasol/).
 
 Features available:
  - DSN parsing and resolving
+ - Ability to use a custom TLS connector
+ - Credentials & OpenID token login support
  - Single and batch query execution
  - Prepared statements
  - WSS support through native-tls and rustls
- - Compression support
+ - Compression support through flate2
  - Row deserialization into Rust types
  - Positional parameter binding
  - Named parameter binding
- - Autocommit is enabled by default. Disabling it results in transactional mode being enabled, which requires explicit "COMMIT" or "ROLLBACK" statements to be executed.
+ - Performant single and multithreaded IMPORT/EXPORT features
 
-Features planned for future versions:
-  - Performant IMPORT/EXPORT functionalities
-  - Performant parallel IMPORT/EXPORT
 
 ## Crate Features:
-* native-tls - (disabled by default) enables `tungstenite`'s WSS support through `native-tls`
-* rustls - (disabled by default) enables `tungstenite`'s WSS support through `rustls`
-* flate2 - (disabled by default) enables support for requests and responses compression
+* `native-tls` - (disabled by default) enables `tungstenite` WSS encryption support through native-tls
+* `native-tls-vendored` - (disabled by default) enables `tungstenite` WSS encryption support through native-tls-vendored
+* `rustls-tls-webpki-roots` - (disabled by default) enables `tungstenite` WSS encryption support through rustls-tls-webpki-roots
+* `rustls-tls-native-roots` - (disabled by default) enables `tungstenite` WSS encryption support through rustls-tls-native-roots
+* `flate2` - (disabled by default) enables compression support
 
 
 ## License

@@ -34,11 +34,10 @@
 //! let data: Vec<Vec<String>> = exa_con.iter_result(&mut result).unwrap();
 //! ```
 //!
-//! First 1000 rows get returned immediately and then data is retrieved in chunks in the [ResultSet]
-//! instance buffer and only concatenated in the [Connection::fetch_all] method.
-//! The buffer size can be changed either in the [ConOpts] or through the [Connection::set_fetch_size] method.
-//! A lazier approach can be employed by using [Connection::fetch] instead, controlling
-//! thus how many rows are returned.
+//! The [Connection::iter_result] method returns a lazy iterator over a result's rows. Only a given
+//! rows buffer is present at a given time in a [ResultSet], which is contained in a [QueryResult],
+//! if the query had a result set. The buffer size can be changed either in the [ConOpts] or
+//! through the [Connection::set_fetch_size] method.
 //!
 //! # Cleanup
 //! [QueryResult] structs will automatically close once fully retrieved. If that does not happen,
@@ -205,9 +204,11 @@
 //!
 //! # Features
 //!
-//! - `native-tls` - (disabled by default) enables `tungstenite` WSS support through native-tls
-//! - `rustls` - (disabled by default) enables `tungstenite` WSS support through rustls
-//! - `flate2` - (disabled by default) enables support for requests and responses compression
+//! - `native-tls` - (disabled by default) enables `tungstenite` WSS encryption support through native-tls
+//! - `native-tls-vendored` - (disabled by default) enables `tungstenite` WSS encryption support through native-tls-vendored
+//! - `rustls-tls-webpki-roots` - (disabled by default) enables `tungstenite` WSS encryption support through rustls-tls-webpki-roots
+//! - `rustls-tls-native-roots` - (disabled by default) enables `tungstenite` WSS encryption support through rustls-tls-native-roots
+//! - `flate2` - (disabled by default) enables compression support
 //!
 //! Enabling these features allows changing additional settings in [ConOpts] instances.
 //!
@@ -241,8 +242,8 @@
 //!
 //! # HTTP Transport
 //!
-//! Parallel, highly performant, IMPORT/EXPORT operations are supported through [Connection::export_to_closure]
-//! and [Connection::import_from_closure].
+//! Parallel, highly performant, IMPORT/EXPORT operations are supported through
+//! [Connection::export_to_closure] and [Connection::import_from_closure].
 
 mod con_opts;
 mod connection;
