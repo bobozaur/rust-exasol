@@ -4,8 +4,7 @@ use std::io::{BufRead, ErrorKind, Read};
 
 const EXPECTED_DELIMITER: &[u8; 2] = b"\r\n";
 
-/// Wrapper that will read the chunk size before reading the actual
-/// data chunk.
+/// Wrapper that will read the chunk size before reading the actual data chunk.
 /// We need a [BufRead] implementing type due to it's `read_line` method for reading the
 /// data chunk length.
 pub struct ExaRowReader<R: Read + BufRead> {

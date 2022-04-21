@@ -146,8 +146,8 @@ impl ResultSet {
 }
 
 /// Iterator over a [ResultSet].
-/// This will only be used internally, which is
-/// why [IntoIterator] is not implemented for [ResultSet].
+/// This will only be created internally, as it contains a mutable reference to the [Connection],
+/// which is why [IntoIterator] is not implemented for [ResultSet].
 pub struct ResultSetIter<'a, T: DeserializeOwned> {
     rs: &'a mut ResultSet,
     con: &'a mut Connection,

@@ -53,6 +53,7 @@ pub enum QueryErrorImpl {
     QueryError(#[from] ExaError),
 }
 
+/// Error related to parameter binding.
 #[derive(Debug, ThisError)]
 pub enum BindError {
     #[error("Missing parameter to bind for {0}")]

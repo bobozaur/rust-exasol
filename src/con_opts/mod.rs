@@ -26,6 +26,19 @@ type ConResult<T> = std::result::Result<T, ConnectionError>;
 /// Default is implemented for [ConOpts] so that most fields have fallback values.
 /// DSN, user, and password fields are practically mandatory,
 /// as they otherwise default to an empty string or JSON null.
+///
+/// # Defaults
+///
+/// schema: None
+/// port: 8563
+/// protocol_version: ProtocolVersion::V3
+/// fetch_size: 5 * 1024 * 1024
+/// query_timeout: 0
+/// use_encryption: *if encryption features are enabled true, else false*
+/// use_compression: false
+/// lowercase_columns: true
+/// autocommit: true
+///
 /// ```
 ///  use exasol::ConOpts;
 ///

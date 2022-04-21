@@ -19,10 +19,26 @@ pub trait HttpTransportOpts {
 
     fn take_timeout(&mut self) -> Option<Duration>;
 
+    /// Sets the timeout of socket read and write operations.
+    /// The socket will error out of the timeout is exceeded.
     fn set_timeout(&mut self, timeout: Option<Duration>);
 }
 
 /// Export options
+///
+/// # Defaults
+///
+/// num_threads: 0 -> this means a thread per node will be spawned
+/// compression: false
+/// encryption: *if encryption features are enabled true, else false*
+/// comment: None
+/// encoding: None -> database default will be used
+/// null: None -> by default NULL values turn to ""
+/// row_separator: `csv` crate's special Terminator::CRLF
+/// column_separator: ','
+/// column_delimiter: '"'
+/// timeout: 120 seconds
+/// with_column_names: true
 #[derive(Clone, Debug)]
 pub struct ExportOpts {
     num_threads: usize,
@@ -189,6 +205,8 @@ impl ExportOpts {
         self.with_column_names
     }
 
+    /// When this is `true`, which is the default, the column names header is also exported
+    /// as the first row. This is important for deserializing structs from rows, for instance.
     pub fn set_with_column_names(&mut self, flag: bool) {
         self.with_column_names = flag
     }
@@ -206,7 +224,23 @@ impl ExportOpts {
     }
 }
 
-/// Import options
+/// HTTP Transport import options.
+///
+/// # Defaults
+///
+/// num_threads: 0 -> this means a thread per node will be spawned
+/// compression: false
+/// encryption: *if encryption features are enabled true, else false*
+/// columns: None -> all table columns will be considered
+/// comment: None
+/// encoding: None -> database default will be used
+/// null: None -> by default NULL values turn to ""
+/// row_separator: `csv` crate's special Terminator::CRLF
+/// column_separator: ','
+/// column_delimiter: '"'
+/// timeout: 120 seconds
+/// skip: 0 rows
+/// trim: None
 #[derive(Clone, Debug)]
 pub struct ImportOpts {
     num_threads: usize,
@@ -377,6 +411,7 @@ impl ImportOpts {
         self.skip
     }
 
+    /// Skipping rows could be used for skipping the header row of a file, for instance.
     pub fn set_skip(&mut self, num: usize) {
         self.skip = num
     }
@@ -420,7 +455,7 @@ impl Display for TrimType {
     }
 }
 
-/// Struct that holds utilities and parameters for HTTP transport
+/// Struct that holds internal utilities and parameters for HTTP transport
 #[derive(Clone, Debug)]
 pub struct HttpTransportConfig {
     pub barrier: Arc<Barrier>,

@@ -11,7 +11,7 @@ use std::net::TcpStream;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
-/// Represents a Websocket with possible Zlib compression set
+/// Represents a wrapped Websocket with possible Zlib compression enabled
 pub enum MaybeCompressedWs {
     Plain(WebSocket<MaybeTlsStream<TcpStream>>),
     #[cfg(feature = "flate2")]

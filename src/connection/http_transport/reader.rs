@@ -1,6 +1,8 @@
 use crossbeam::channel::{IntoIter, Receiver};
 use std::io::Read;
 
+/// HTTP Transport reader that can be used
+/// in custom closures in [Connection::export_to_closure].
 pub struct ExaReader {
     receiver: IntoIter<Vec<u8>>,
     buf: Vec<u8>,

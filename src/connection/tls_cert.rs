@@ -3,6 +3,8 @@ use __native_tls::Certificate as NtlsCert;
 #[cfg(feature = "rustls")]
 use __rustls::Certificate as RlsCert;
 
+/// Wrapper over TLS certificate types provided by rustls and native-tls.
+/// Used in fingerprint validation.
 #[non_exhaustive]
 pub enum Certificate {
     #[cfg(feature = "rustls")]

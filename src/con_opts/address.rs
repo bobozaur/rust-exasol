@@ -3,6 +3,8 @@ use rand::prelude::SliceRandom;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::vec::IntoIter;
 
+/// Struct holding a resolved DSN to possibly multiple addresses.
+/// Additionally holding the port and the fingerprint resulted from parsing the DSN.
 #[derive(Debug, Clone)]
 pub struct AddressList {
     ip_vec: IntoIter<String>,

@@ -241,15 +241,15 @@
 //!
 //! # HTTP Transport
 //!
-//! Parallel, highly performant, IMPORT/EXPORT operations are supported through [Connection::export]
-//! and [Connection::import].
+//! Parallel, highly performant, IMPORT/EXPORT operations are supported through [Connection::export_to_closure]
+//! and [Connection::import_from_closure].
 
 mod con_opts;
 mod connection;
 pub mod error;
 mod params;
 
-pub use con_opts::{ConOpts, ProtocolVersion};
+pub use con_opts::{ConOpts, Credentials, LoginKind, ProtocolVersion};
 #[cfg(any(feature = "rustls", feature = "native-tls-basic"))]
 pub use connection::Connector;
 pub use connection::{connect, deserialize_as_seq, Connection};

@@ -2,6 +2,7 @@ use super::ConResult;
 use rand::rngs::OsRng;
 use rsa::{PaddingScheme, PublicKey, RsaPublicKey};
 
+/// Login credentials.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Credentials {
     username: String,
@@ -39,6 +40,8 @@ impl Credentials {
     }
 }
 
+/// Login type.
+/// The variant chosen dictates which login process is called.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoginKind {
     Credentials(Credentials),

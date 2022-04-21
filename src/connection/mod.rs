@@ -2,10 +2,8 @@ use crate::con_opts::{ConOpts, Credentials, LoginKind};
 use crate::connection::http_transport::{ExaReader, ExaWriter};
 use crate::error::{ConnectionError, DriverError, Error, HttpTransportError};
 use crate::error::{QueryError, RequestError, Result};
-use compress::MaybeCompressedWs;
-use csv::{Reader, ReaderBuilder, WriterBuilder};
+use csv::{Reader, WriterBuilder};
 use driver_attr::DriverAttributes;
-use exa_ws::ExaWebSocket;
 pub use http_transport::{ExportOpts, HttpTransportOpts, ImportOpts, TrimType};
 use http_transport::{HttpExportJob, HttpImportJob, HttpTransportJob};
 use lazy_regex::regex;
@@ -22,6 +20,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fmt::{Debug, Formatter};
+use std::fs::OpenOptions;
 use std::iter::Flatten;
 use std::net::TcpStream;
 use std::ops::ControlFlow;
@@ -33,15 +32,15 @@ use tungstenite::client_tls_with_config;
 #[cfg(any(feature = "rustls", feature = "native-tls-basic"))]
 pub use tungstenite::Connector;
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
+use ws::ExaWebSocket;
 
-mod compress;
 mod driver_attr;
-mod exa_ws;
 mod http_transport;
 mod response;
 mod result;
 mod row;
 mod tls_cert;
+mod ws;
 
 const TRANSPORT_BUFFER_SIZE: usize = 65536;
 
@@ -172,7 +171,7 @@ impl Connection {
         Self::create(cb, opts)
     }
 
-    /// Creates a [Connection] using a custom [TlsConnector] and a set of [ConOpts].
+    /// Creates a [Connection] using a custom [Connector] and a set of [ConOpts].
     ///
     /// This method is only available when either the `rustls` or `native-tls` features
     /// are enabled. Note that encryption in the [ConOpts] will always be automatically
@@ -530,10 +529,7 @@ impl Connection {
         iter.into_iter().flatten()
     }
 
-    /// HTTP Transport export of a query or table with row deserialization into a given Rust type.
-    /// The operation can be controlled by passing an [Option] with [HttpTransportOpts].
-    /// By default, a thread is created for every node in the Exasol cluster, encryption is enabled
-    /// and compression is disabled.
+    /// HTTP Transport export with a closure that deserializes rows into a `Vec`.
     /// ```
     /// # use exasol::{connect, QueryResult};
     /// # use exasol::error::Result;
@@ -592,64 +588,29 @@ impl Connection {
             .and_then(|r| r)
     }
 
-    pub fn export_to_file<P>(&mut self, path: P, mut opts: ExportOpts) -> Result<()>
+    /// HTTP Transport export with a closure that creates and writes to a file.
+    pub fn export_to_file<P>(&mut self, path: P, opts: ExportOpts) -> Result<()>
     where
         P: AsRef<Path>,
     {
-        // Most CSV options only matter for the file Writer,
-        // so we'll make new options for the transfer itself
-        // and use the given options in the closure.
-        let mut transport_opts = ExportOpts::new();
-        if let Some(s) = opts.query() {
-            transport_opts.set_query(s)
-        }
-        if let Some(s) = opts.table_name() {
-            transport_opts.set_table_name(s)
-        }
-        if let Some(s) = opts.comment() {
-            transport_opts.set_comment(s)
-        }
-        if let Some(s) = opts.encoding() {
-            transport_opts.set_encoding(s)
-        }
-        if let Some(s) = opts.null() {
-            transport_opts.set_null(s)
-        }
+        let closure = |mut reader: ExaReader| {
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(path)
+                .and_then(|mut file| std::io::copy(&mut reader, &mut file))
+                .map_err(HttpTransportError::IoError)
+                .map_err(DriverError::HttpTransportError)?;
 
-        transport_opts.set_num_threads(opts.num_threads());
-        transport_opts.set_compression(opts.compression());
-        transport_opts.set_encryption(opts.encryption());
-        transport_opts.set_row_separator(opts.row_separator());
-        transport_opts.set_with_column_names(opts.with_column_names());
-        transport_opts.set_timeout(opts.take_timeout());
-
-        let closure = |reader: ExaReader| {
-            let mut csv_reader = Reader::from_reader(reader);
-
-            let writer = WriterBuilder::new()
-                .delimiter(opts.column_separator())
-                .quote(opts.column_delimiter())
-                .has_headers(opts.with_column_names())
-                .from_path(path);
-
-            let res = writer.and_then(|mut csv_writer| {
-                let header = csv_reader.byte_headers()?;
-                csv_writer.write_byte_record(header)?;
-
-                for res in csv_reader.into_byte_records() {
-                    let rec = res?;
-                    csv_writer.write_byte_record(&rec)?;
-                }
-                Ok(())
-            });
-
-            map_csv_result(res)
+            Ok(())
         };
 
-        self.export_to_closure(closure, transport_opts)
-            .and_then(|r| r)
+        self.export_to_closure(closure, opts).and_then(|r| r)
     }
 
+    /// HTTP Transport export implementation that can take any closure and an instance
+    /// of [ExportOpts]. The closure must make use of a reader implementing [Read].
+    /// For examples check [Connection::export_to_file] and [Connection::export_to_vec].
     pub fn export_to_closure<F, T>(&mut self, callback: F, opts: ExportOpts) -> Result<T>
     where
         F: FnOnce(ExaReader) -> T,
@@ -662,10 +623,8 @@ impl Connection {
         HttpExportJob::new(self, callback, opts).run()
     }
 
-    /// HTTP Transport import into a table from a Rust type implementing [IntoIterator].
-    /// The operation can be controlled by passing an [Option] with [HttpTransportOpts].
-    /// By default, a thread is created for every node in the Exasol cluster, encryption is enabled
-    /// and compression is disabled.
+    /// HTTP Transport import with a closure that serializes rows from a type implementing
+    /// [IntoIterator].
     /// ```
     /// # use exasol::{connect, QueryResult};
     /// # use exasol::error::Result;
@@ -729,65 +688,28 @@ impl Connection {
             .and_then(|r| r)
     }
 
-    pub fn import_from_file<P>(&mut self, path: P, mut opts: ImportOpts) -> Result<()>
+    /// HTTP Transport import with a closure that reads data directly from a file.
+    pub fn import_from_file<P>(&mut self, path: P, opts: ImportOpts) -> Result<()>
     where
         P: AsRef<Path>,
     {
-        // Most CSV options only matter for the file Reader,
-        // so we'll make new options for the transfer itself
-        // and use the given options in the closure.
-        let mut transport_opts = ImportOpts::new();
-        if let Some(v) = opts.columns() {
-            transport_opts.set_columns(v)
-        }
-        if let Some(s) = opts.table_name() {
-            transport_opts.set_table_name(s)
-        }
-        if let Some(s) = opts.comment() {
-            transport_opts.set_comment(s)
-        }
-        if let Some(s) = opts.encoding() {
-            transport_opts.set_encoding(s)
-        }
-        if let Some(s) = opts.null() {
-            transport_opts.set_null(s)
-        }
+        let closure = |mut writer: ExaWriter| {
+            OpenOptions::new()
+                .read(true)
+                .open(path)
+                .and_then(|mut file| std::io::copy(&mut file, &mut writer))
+                .map_err(HttpTransportError::IoError)
+                .map_err(DriverError::HttpTransportError)?;
 
-        transport_opts.set_num_threads(opts.num_threads());
-        transport_opts.set_compression(opts.compression());
-        transport_opts.set_encryption(opts.encryption());
-        transport_opts.set_row_separator(opts.row_separator());
-        transport_opts.set_skip(opts.skip());
-        transport_opts.set_trim(opts.trim());
-        transport_opts.set_timeout(opts.take_timeout());
-
-        let closure = |writer: ExaWriter| {
-            let mut csv_writer = WriterBuilder::new()
-                .has_headers(false)
-                .buffer_capacity(TRANSPORT_BUFFER_SIZE)
-                .from_writer(writer);
-
-            let reader = ReaderBuilder::new()
-                .delimiter(opts.column_separator())
-                .quote(opts.column_delimiter())
-                .from_path(path);
-
-            let res = reader.and_then(|csv_reader| {
-                for res in csv_reader.into_byte_records() {
-                    let rec = res?;
-                    csv_writer.write_byte_record(&rec)?;
-                }
-
-                Ok(())
-            });
-
-            map_csv_result(res)
+            Ok(())
         };
 
-        self.import_from_closure(closure, transport_opts)
-            .and_then(|r| r)
+        self.import_from_closure(closure, opts).and_then(|r| r)
     }
 
+    /// HTTP Transport import implementation that can take any closure and an instance
+    /// of [ImportOpts]. The closure must make use of a writer implementing [Write].
+    /// For examples check [Connection::import_from_file] and [Connection::import_from_iter].
     pub fn import_from_closure<F, T>(&mut self, callback: F, opts: ImportOpts) -> Result<T>
     where
         F: FnOnce(ExaWriter) -> T,

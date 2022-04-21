@@ -25,6 +25,7 @@ pub use writer::ExaWriter;
 /// Convenience alias
 pub type TransportResult<T> = std::result::Result<T, HttpTransportError>;
 
+/// Struct representing an EXPORT HTTP Transport job.
 pub struct HttpExportJob<'a, T, F: FnOnce(ExaReader) -> T> {
     con: &'a mut Connection,
     opts: Option<ExportOpts>,
@@ -131,6 +132,7 @@ where
     }
 }
 
+/// Struct representing an IMPORT HTTP Transport job.
 pub struct HttpImportJob<'a, T, F: FnOnce(ExaWriter) -> T> {
     con: &'a mut Connection,
     opts: Option<ImportOpts>,
@@ -191,7 +193,13 @@ where
             ));
         };
 
-        parts.push(format!("IMPORT INTO {} FROM CSV", source));
+        let columns = if let Some(cols) = opts.columns() {
+            format!("({})", cols.join(", "))
+        } else {
+            "".to_owned()
+        };
+
+        parts.push(format!("IMPORT INTO {} {} FROM CSV", source, columns));
         parts.push(files);
 
         if let Some(enc) = opts.encoding() {
@@ -235,6 +243,8 @@ where
     }
 }
 
+/// The heavy lifter of the HTTP Transport functionalities,
+/// this trait defines the flow of HTTP transport, end-to-end.
 pub trait HttpTransportJob {
     type Opts: HttpTransportOpts + Send;
     type Worker: HttpTransportWorker;

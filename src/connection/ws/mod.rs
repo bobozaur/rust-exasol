@@ -1,8 +1,9 @@
-use super::{Attributes, MaybeCompressedWs, ReqResult, ResponseData};
+use super::{Attributes, ReqResult, Response, ResponseData};
 use super::{Certificate, ConResult};
 use crate::con_opts::LoginKind;
 use crate::error::{ConnectionError, DriverError, Error, Result};
 use crate::ConOpts;
+use compress::MaybeCompressedWs;
 use log::{debug, error};
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::RsaPublicKey;
@@ -14,6 +15,10 @@ use std::net::TcpStream;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
+pub mod compress;
+
+/// Websocket wrapper.
+/// Mainly serves in separation of concerns, as it handles the lower level websocket calls.
 pub struct ExaWebSocket {
     ws: MaybeCompressedWs,
     exa_attr: HashMap<String, Value>,

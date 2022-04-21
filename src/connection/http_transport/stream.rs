@@ -21,6 +21,9 @@ use std::net::TcpStream;
 use std::sync::Arc;
 
 /// A stream that might be protected with TLS.
+/// This is basically a carbon copy of the one implemented by `tungstenite`,
+/// except that we want to wrap a server TcpStream, not a client.
+/// This wrapper serves in HTTP Transport.
 pub enum MaybeTlsStream {
     /// Unencrypted socket stream.
     Plain(TcpStream),

@@ -138,7 +138,9 @@ impl HttpTransportWorker for HttpImportThread {
     }
 }
 
-/// Exasol HTTP Transport protocol implementation
+/// Trait for Exasol HTTP Transport protocol implementation.
+/// This trait provides the interface for a single worker to perform
+/// operations related to an IMPORT or EXPORT job.
 pub trait HttpTransportWorker {
     /// Communication channel type.
     type Channel: Clone + Send;
