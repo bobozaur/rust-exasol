@@ -151,7 +151,7 @@ impl ResultSet {
 pub struct ResultSetIter<'a, T: DeserializeOwned> {
     rs: &'a mut ResultSet,
     con: &'a mut Connection,
-    row_type: PhantomData<*const T>,
+    row_type: PhantomData<T>,
 }
 
 impl<'a, T> ResultSetIter<'a, T>

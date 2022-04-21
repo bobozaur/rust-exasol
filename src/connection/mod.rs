@@ -2,7 +2,7 @@ use crate::con_opts::{ConOpts, Credentials, LoginKind};
 use crate::connection::http_transport::{ExaReader, ExaWriter};
 use crate::error::{ConnectionError, DriverError, Error, HttpTransportError};
 use crate::error::{QueryError, RequestError, Result};
-use csv::{Reader, WriterBuilder};
+use csv::{Reader, StringRecord, Terminator, WriterBuilder};
 use driver_attr::DriverAttributes;
 pub use http_transport::{ExportOpts, HttpTransportOpts, ImportOpts, TrimType};
 use http_transport::{HttpExportJob, HttpImportJob, HttpTransportJob};
@@ -489,11 +489,16 @@ impl Connection {
     /// You have to work with one result set at a time, collecting/storing it locally
     /// and then generate a new iterator for a different [QueryResult].
     ///
+    /// The mutable reference approach, compared to a previous interior mutability implementation,
+    /// is both indirection free, thus faster, and Send + Sync, meaning the [Iterator] resulted
+    /// can even be piped into `rayon::par_bridge()` seamlessly.
+    ///
     /// You are not, however, restricted to iterating over the entire result set at a given time.
     /// Since the iterator is generated from a mutable reference of the [QueryResult], you can,
     /// say, get the iterator, `take` only the first 100 rows, drop the iterator, but sometime
     /// later, generate a new iterator from the same [QueryResult] and collect the rest of the
     /// result set.
+    ///
     ///
     /// The rule is that if there are less than 1000 rows in the result set, they are
     /// returned immediately. Otherwise, the data is retrieved in chunks from the database
@@ -545,43 +550,38 @@ impl Connection {
     where
         T: DeserializeOwned,
     {
-        // Recreating parameters because otherwise the CSV stuff
-        // would have to be mapped to both the CSV Reader and the query.
-        let mut transport_opts = ExportOpts::new();
-        if let Some(s) = opts.query() {
-            transport_opts.set_query(s)
-        }
-        if let Some(s) = opts.table_name() {
-            transport_opts.set_table_name(s)
-        }
-        if let Some(s) = opts.comment() {
-            transport_opts.set_comment(s)
-        }
-        if let Some(s) = opts.encoding() {
-            transport_opts.set_encoding(s)
-        }
-        if let Some(s) = opts.null() {
-            transport_opts.set_null(s)
-        }
-
-        transport_opts.set_num_threads(opts.num_threads());
-        transport_opts.set_compression(opts.compression());
-        transport_opts.set_encryption(opts.encryption());
-        transport_opts.set_row_separator(opts.row_separator());
-        transport_opts.set_with_column_names(opts.with_column_names());
-        transport_opts.set_timeout(opts.take_timeout());
+        // Overwriting these values as that's what the CSV reader expects.
+        opts.set_row_separator(Terminator::CRLF);
+        opts.set_column_separator(b',');
+        opts.set_column_delimiter(b'"');
+        opts.set_null("");
+        opts.set_with_column_names(true);
 
         let closure = |reader: ExaReader| {
-            let csv_reader = Reader::from_reader(reader);
-            let res = csv_reader
-                .into_deserialize()
-                .collect::<csv::Result<Vec<T>>>();
+            let mut csv_reader = Reader::from_reader(reader);
 
-            map_csv_result(res)
+            // Convert headers to lowercase to allow easier deserialization of fields
+            let header_res = csv_reader.headers().map(|headers| {
+                headers
+                    .into_iter()
+                    .map(|f| f.to_lowercase())
+                    .collect::<StringRecord>()
+            });
+
+            // Remap headers into reader.
+            let header_res = header_res.map(|headers| csv_reader.set_headers(headers));
+
+            // Read and deserialize the data
+            let data_res = header_res.and_then(|_| {
+                csv_reader
+                    .into_deserialize()
+                    .collect::<csv::Result<Vec<T>>>()
+            });
+
+            map_csv_result(data_res)
         };
 
-        self.export_to_closure(closure, transport_opts)
-            .and_then(|r| r)
+        self.export_to_closure(closure, opts).and_then(|r| r)
     }
 
     /// HTTP Transport export with a closure that creates and writes to a file.
@@ -644,32 +644,12 @@ impl Connection {
         I: IntoIterator<Item = T>,
         T: Serialize,
     {
-        // Recreating parameters because otherwise the CSV stuff
-        // would have to be mapped to both the CSV Writer and the query.
-        let mut transport_opts = ImportOpts::new();
-        if let Some(v) = opts.columns() {
-            transport_opts.set_columns(v)
-        }
-        if let Some(s) = opts.table_name() {
-            transport_opts.set_table_name(s)
-        }
-        if let Some(s) = opts.comment() {
-            transport_opts.set_comment(s)
-        }
-        if let Some(s) = opts.encoding() {
-            transport_opts.set_encoding(s)
-        }
-        if let Some(s) = opts.null() {
-            transport_opts.set_null(s)
-        }
+        // Overwriting these values as that's what the CSV writer expects.
+        opts.set_row_separator(Terminator::CRLF);
+        opts.set_column_separator(b',');
+        opts.set_column_delimiter(b'"');
+        opts.set_null("");
 
-        transport_opts.set_num_threads(opts.num_threads());
-        transport_opts.set_compression(opts.compression());
-        transport_opts.set_encryption(opts.encryption());
-        transport_opts.set_row_separator(opts.row_separator());
-        transport_opts.set_skip(opts.skip());
-        transport_opts.set_trim(opts.trim());
-        transport_opts.set_timeout(opts.take_timeout());
         let closure = |writer: ExaWriter| {
             let mut csv_writer = WriterBuilder::new()
                 .has_headers(false)
@@ -684,8 +664,7 @@ impl Connection {
             map_csv_result(res)
         };
 
-        self.import_from_closure(closure, transport_opts)
-            .and_then(|r| r)
+        self.import_from_closure(closure, opts).and_then(|r| r)
     }
 
     /// HTTP Transport import with a closure that reads data directly from a file.
