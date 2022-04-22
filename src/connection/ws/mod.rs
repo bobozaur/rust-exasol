@@ -4,7 +4,7 @@ use crate::con_opts::LoginKind;
 use crate::error::{ConnectionError, DriverError, Error, Result};
 use crate::ConOpts;
 use compress::MaybeCompressedWs;
-use log::{debug, error};
+use log::{debug, error, trace};
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::RsaPublicKey;
 use serde_json::{json, Value};
@@ -91,8 +91,18 @@ impl ExaWebSocket {
             .and_then(|r| r.try_into());
 
         match &resp {
-            Ok((rd, attr)) => debug!("{:#?}\n{:#?}", attr, rd),
             Err(e) => error!("{:#?}", e),
+            Ok((rd, attr)) => {
+                if let Some(attr) = attr {
+                    debug!("{:#?}", attr);
+                }
+                if let Some(rd) = rd {
+                    match rd {
+                        ResponseData::FetchedData(fd) => trace!("{:#?}", fd),
+                        _ => debug!("{:#?}", rd)
+                    }
+                }
+            }
         }
 
         let (data, attr) = resp?;

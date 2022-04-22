@@ -209,7 +209,7 @@ where
         self.rs.is_closed = true;
         self.rs
             .result_set_handle
-            .map_or(Ok(()), |h| self.con.close_results_impl([h]))
+            .map_or(Ok(()), |h| self.con.close_results_impl(&[h]))
     }
 
     /// Gets the next chunk of the result set from Exasol

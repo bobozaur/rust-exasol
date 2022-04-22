@@ -95,8 +95,10 @@ impl Drop for Connection {
     /// Implementing drop to properly get rid of the connection and its components
     fn drop(&mut self) {
         // Closes result sets and prepared statements
-        let ps_handles = std::mem::take(&mut self.rs_handles);
-        self.close_results_impl(ps_handles).ok();
+        let rs_handles = std::mem::take(&mut self.rs_handles);
+        if !rs_handles.is_empty() {
+            self.close_results_impl(&rs_handles).ok();
+        }
 
         std::mem::take(&mut self.ps_handles)
             .into_iter()
@@ -924,7 +926,7 @@ impl Connection {
                 true => None,
                 false => rs.handle(),
             })
-            .map(|h| self.close_results_impl([h]))
+            .map(|h| self.close_results_impl(&[h]))
             .unwrap_or(Ok(()))
     }
 
@@ -989,10 +991,13 @@ impl Connection {
 
     /// Closes multiple results sets by going over the result set handles [Iterator].
     #[inline]
-    pub(crate) fn close_results_impl<I>(&mut self, handles: I) -> Result<()>
+    pub(crate) fn close_results_impl<I>(&mut self, handles: &I) -> Result<()>
     where
-        I: IntoIterator<Item = u16> + Serialize,
+        for<'a> &'a I: IntoIterator<Item = &'a u16> + Serialize,
     {
+        for h in handles {
+            self.rs_handles.remove(h);
+        }
         let payload = json!({"command": "closeResultSet", "resultSetHandles": handles});
         self.do_request(payload).map(|_| ())
     }
@@ -1050,6 +1055,7 @@ impl Connection {
     /// Closes a prepared statement through its handle.
     #[inline]
     fn close_prepared_stmt_impl(&mut self, h: u16) -> Result<()> {
+        self.ps_handles.remove(&h);
         let payload = json!({"command": "closePreparedStatement", "statementHandle": h});
         self.do_request(payload).map(|_| ())
     }
