@@ -99,7 +99,7 @@ impl ExaWebSocket {
                 if let Some(rd) = rd {
                     match rd {
                         ResponseData::FetchedData(fd) => trace!("{:#?}", fd),
-                        _ => debug!("{:#?}", rd)
+                        _ => debug!("{:#?}", rd),
                     }
                 }
             }
