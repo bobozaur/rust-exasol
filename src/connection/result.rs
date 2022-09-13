@@ -151,6 +151,7 @@ impl ResultSet {
 pub struct ResultSetIter<'a, T: DeserializeOwned> {
     rs: &'a mut ResultSet,
     con: &'a mut Connection,
+    err_countered: bool,
     row_type: PhantomData<T>,
 }
 
@@ -162,6 +163,7 @@ where
         Self {
             rs,
             con,
+            err_countered: false,
             row_type: PhantomData,
         }
     }
@@ -245,8 +247,8 @@ where
         let row = if self.rs.fetched_data.chunk_rows_pos < self.rs.fetched_data.chunk_rows_num {
             // There still are rows in this chunk
             Some(self.next_row())
-        } else if self.rs.total_rows_pos >= self.rs.total_rows_num {
-            // All rows retrieved
+        } else if self.rs.total_rows_pos >= self.rs.total_rows_num || self.err_countered {
+            // All rows retrieved or an error was encountered.
             None
         } else {
             // Whole chunk retrieved. Get new one and get row.
@@ -254,13 +256,24 @@ where
                 .map_or_else(|e| Some(Err(e)), |_| Some(self.next_row()))
         };
 
-        // Updating positional counters
-        self.rs.total_rows_pos += 1;
-        self.rs.fetched_data.chunk_rows_pos += 1;
+        // If an error was encountered when fetching the
+        // next chunk, then we'll be stopping the iteration.
+        //
+        // We'll also NOT increment counters so as not to
+        // mess up a recreation of the iterator and thus
+        // further attempts to retrieve the rest of the result set.
+        if let Some(Err(_)) = &row {
+            self.err_countered = true;
+            row
+        } else {
+            // Updating positional counters
+            self.rs.total_rows_pos += 1;
+            self.rs.fetched_data.chunk_rows_pos += 1;
 
-        // If row is None, all rows were iterated
-        // so we're closing the result set, propagating the error, if any
-        row.or_else(|| self.close().map_or_else(|e| Some(Err(e)), |_| None))
+            // If row is None, all rows were iterated
+            // so we're closing the result set, propagating the error, if any
+            row.or_else(|| self.close().map_or_else(|e| Some(Err(e)), |_| None))
+        }
     }
 
     /// This should optimize collection as we can always know
