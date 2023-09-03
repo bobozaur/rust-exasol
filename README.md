@@ -1,10 +1,22 @@
 [![Crates.io](https://img.shields.io/crates/v/exasol.svg)](https://crates.io/crates/exasol)
 
 # exasol
+
 A synchronous database connector for Exasol written in Rust, based on the Exasol [Websocket API](https://github.com/exasol/websocket-api).  
 Inspired by [Py-Exasol](https://github.com/exasol/pyexasol).
 
 Please find the documentation [here](https://docs.rs/exasol/latest/exasol/).
+
+> [!IMPORTANT]  
+> This crate is no longer maintained and is now archived.  
+> Since `crates.io` does not allow deletion of a crate and this pretty 
+> much keeps the `exasol` crate name occupied, I am more than willing to 
+> transfer ownership of the crate to someone representing Exasol. 
+> 
+> Please reach out if you are interested.
+> 
+> Additionally, for an alternative driver, please see [sqlx-exasol](https://github.com/bobozaur/sqlx-exasol).
+
 
 Features available:
  - DSN parsing and resolving
